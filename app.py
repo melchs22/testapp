@@ -48,9 +48,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-PASSENGERS_FILE_PATH = r"C:\\Users\\TUTU\\Downloads\\PASSENGERS.xlsx"
-DRIVERS_FILE_PATH = r"C:\\Users\\TUTU\\Downloads\\DRIVERS.xlsx"
-DATA_FILE_PATH = r"C:\\Users\\TUTU\\Downloads\\BEER.xlsx"
+PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
+DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
+DATA_FILE_PATH = r"./BEER.xlsx"
 
 
 # Function to load passengers data with date filtering
@@ -621,7 +621,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
 
     # Add header image
     try:
-        pdf.image(r"C:\Users\TUTU\PyCharmMiscProject\your_image.png", x=10, y=4, w=40)
+        pdf.image(r"./your_image.png", x=10, y=4, w=40)
         pdf.ln(40)  # Move down after image
     except:
         st.warning("Could not add image to PDF")
@@ -735,7 +735,7 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
 
 def main():
     st.title("Union App Metrics Dashboard")
-    UNION_STAFF_FILE_PATH = r"C:\Users\TUTU\Downloads\UNION STAFF.xlsx"
+    UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
     try:
         # Clear any cached data to ensure fresh load
