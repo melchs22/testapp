@@ -63,11 +63,11 @@ def extract_ugx_amount(value):
         # Convert to string and clean
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
         # Extract numeric part using regex
-        amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
+        amounts = re.findall(r'-?[\d]+(?:\.\d+)?', value_str)
         if amounts:
             return float(amounts[0])
         # Try direct conversion if it's a numeric string
-        if value_str.replace('.', '').isdigit():
+        if value_str.replace('.', '').replace('-', '').isdigit():
             return float(value_str)
         return 0.0
     except (ValueError, TypeError):
@@ -97,18 +97,18 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
         if not os.path.exists(DRIVERS_FILE_PATH):
             st.warning(f"Drivers file not found at {DRIVERS_FILE_PATH}. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance', 'Commission Owed'])
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df = pd.read_excel(DRIVERS_FILE_PATH)
         if 'Id' not in df.columns or 'Created' not in df.columns:
             st.warning("Missing 'Id' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance', 'Commission Owed'])
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
@@ -116,11 +116,6 @@ def load_drivers_data(date_range=None):
         else:
             st.warning("No 'Wallet Balance' column found in DRIVERS.xlsx. Setting to 0.")
             df['Wallet Balance'] = 0.0
-        if 'Commission Owed' in df.columns:
-            df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
-        else:
-            st.warning("No 'Commission Owed' column found in DRIVERS.xlsx. Setting to 0.")
-            df['Commission Owed'] = 0.0
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -128,7 +123,7 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance', 'Commission Owed'])
+        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
 
 # Function to load and merge transactions data
 def load_transactions_data():
@@ -200,8 +195,12 @@ def passenger_metrics(df_passengers):
 def driver_metrics(df_drivers):
     try:
         riders_onboarded = df_drivers['Id'].nunique() if not df_drivers.empty else 0
-        driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns and not df_drivers.empty else 0.0
-        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns and not df_drivers.empty else 0.0
+        if 'Wallet Balance' in df_drivers.columns and not df_drivers.empty:
+            driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
+            commission_owed = float(abs(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()))
+        else:
+            driver_wallet_balance = 0.0
+            commission_owed = 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
