@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import io
 from fpdf import FPDF
 import uuid
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -53,6 +54,25 @@ DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
 DATA_FILE_PATH = r"./BEER.xlsx"
 TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
 UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
+GEOCODE_CACHE_PATH = r"./geocode_cache.csv"
+
+# Function to load or initialize geocode cache
+def load_geocode_cache():
+    try:
+        if os.path.exists(GEOCODE_CACHE_PATH):
+            return pd.read_csv(GEOCODE_CACHE_PATH)
+        else:
+            return pd.DataFrame(columns=["location", "latitude", "longitude"])
+    except Exception as e:
+        st.warning(f"Error loading geocode cache: {str(e)}")
+        return pd.DataFrame(columns=["location", "latitude", "longitude"])
+
+# Function to save geocode cache
+def save_geocode_cache(cache_df):
+    try:
+        cache_df.to_csv(GEOCODE_CACHE_PATH, index=False)
+    except Exception as e:
+        st.warning(f"Error saving geocode cache: {str(e)}")
 
 # Function to extract UGX amounts from any column
 def extract_ugx_amount(value):
@@ -69,11 +89,16 @@ def extract_ugx_amount(value):
     except (ValueError, TypeError):
         return 0.0
 
-# Function to geocode locations using OpenCage
-def geocode_location(location):
+# Function to geocode locations using OpenCage with caching
+def geocode_location(location, cache_df):
     try:
         if pd.isna(location) or not location:
-            return None, None
+            return None, None, cache_df
+        # Check cache
+        cache_hit = cache_df[cache_df["location"] == location]
+        if not cache_hit.empty:
+            return cache_hit["latitude"].iloc[0], cache_hit["longitude"].iloc[0], cache_df
+        # Query OpenCage API
         url = "https://api.opencagedata.com/geocode/v1/json"
         params = {
             "q": location,
@@ -87,11 +112,48 @@ def geocode_location(location):
             geometry = data["results"][0]["geometry"]
             lat, lng = geometry["lat"], geometry["lng"]
             if lng is not None and lat is not None:
-                return lat, lng
-        return None, None
+                # Append to cache
+                new_entry = pd.DataFrame({
+                    "location": [location],
+                    "latitude": [lat],
+                    "longitude": [lng]
+                })
+                cache_df = pd.concat([cache_df, new_entry], ignore_index=True)
+                return lat, lng, cache_df
+        return None, None, cache_df
     except Exception as e:
         st.warning(f"Error geocoding {location}: {str(e)}")
-        return None, None
+        return None, None, cache_df
+
+# Function to prepare heatmap data in the background
+def prepare_heatmap_data(df, session_state_key="heatmap_data"):
+    try:
+        if 'From Location' not in df.columns or 'Trip Status' not in df.columns:
+            st.session_state[session_state_key] = None
+            st.session_state["heatmap_ready"] = True
+            return
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        if completed_trips.empty:
+            st.session_state[session_state_key] = None
+            st.session_state["heatmap_ready"] = True
+            return
+        cache_df = load_geocode_cache()
+        completed_trips = completed_trips.copy()
+        completed_trips['Latitude'] = pd.Series([None] * len(completed_trips), index=completed_trips.index)
+        completed_trips['Longitude'] = pd.Series([None] * len(completed_trips), index=completed_trips.index)
+        for idx in completed_trips.index:
+            location = completed_trips.at[idx, 'From Location']
+            lat, lng, cache_df = geocode_location(location, cache_df)
+            if lat is not None and lng is not None:
+                completed_trips.at[idx, 'Latitude'] = lat
+                completed_trips.at[idx, 'Longitude'] = lng
+        save_geocode_cache(cache_df)
+        st.session_state[session_state_key] = completed_trips[['Latitude', 'Longitude']].dropna()
+        st.session_state["heatmap_ready"] = True
+    except Exception as e:
+        st.session_state[session_state_key] = None
+        st.session_state["heatmap_ready"] = True
+        st.error(f"Error preparing heatmap data: {str(e)}")
 
 # Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
@@ -100,7 +162,6 @@ def load_passengers_data(date_range=None):
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
-
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -119,7 +180,6 @@ def load_drivers_data(date_range=None):
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
         if 'Commission Owed' in df.columns:
             df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
-
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -133,19 +193,16 @@ def load_drivers_data(date_range=None):
 def load_transactions_data():
     try:
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
-        
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Company Amt (UGX)' column found in transactions data")
             transactions_df['Company Commission Cleaned'] = 0.0
-            
         if 'Pay Mode' in transactions_df.columns:
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
             transactions_df['Pay Mode'] = 'Unknown'
-            
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
@@ -154,52 +211,31 @@ def load_transactions_data():
 def load_data():
     try:
         df = pd.read_excel(DATA_FILE_PATH)
-        
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
                 df['Company Commission Cleaned'] += transactions_df['Company Commission Cleaned']
             elif 'Company Commission Cleaned' not in df.columns:
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
-                
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
-
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
-
         if 'Trip Pay Amount' in df.columns:
             df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
-
         df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
-
         if 'Company Commission Cleaned' not in df.columns:
             st.warning("No company commission data found - creating placeholder")
             df['Company Commission Cleaned'] = 0.0
-
         if 'Pay Mode' not in df.columns:
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
-
-        # Geocode 'From Location' for completed trips
-        if 'From Location' in df.columns and 'Trip Status' in df.columns:
-            completed_trips = df[df['Trip Status'] == 'Job Completed']
-            if not completed_trips.empty:
-                df['Latitude'] = pd.Series([None] * len(df), index=df.index)
-                df['Longitude'] = pd.Series([None] * len(df), index=df.index)
-                for idx in completed_trips.index:
-                    lat, lng = geocode_location(completed_trips.at[idx, 'From Location'])
-                    if lat is not None and lng is not None:
-                        df.at[idx, 'Latitude'] = lat
-                        df.at[idx, 'Longitude'] = lng
-
         return df
-
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
@@ -657,18 +693,18 @@ def customer_payment_methods(df):
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
 
-def heatmap_completed_trips(df):
+def heatmap_completed_trips():
     try:
-        if 'Latitude' not in df.columns or 'Longitude' not in df.columns or 'Trip Status' not in df.columns:
-            st.warning("Required columns for heatmap (Latitude, Longitude, Trip Status) are missing.")
+        if not st.session_state.get("heatmap_ready", False):
+            st.spinner("Preparing heatmap, please wait...")
             return
-        completed_trips = df[df['Trip Status'] == 'Job Completed'][['Latitude', 'Longitude']].dropna()
-        if completed_trips.empty:
+        heatmap_data = st.session_state.get("heatmap_data", None)
+        if heatmap_data is None or heatmap_data.empty:
             st.warning("No completed trips with valid coordinates for heatmap.")
             return
         layer = pdk.Layer(
             "HeatmapLayer",
-            data=completed_trips,
+            data=heatmap_data,
             get_position=["Longitude", "Latitude"],
             radius_pixels=100,
             opacity=0.5,
@@ -676,8 +712,8 @@ def heatmap_completed_trips(df):
             aggregation="SUM"
         )
         view_state = pdk.ViewState(
-            latitude=completed_trips['Latitude'].mean(),
-            longitude=completed_trips['Longitude'].mean(),
+            latitude=heatmap_data['Latitude'].mean(),
+            longitude=heatmap_data['Longitude'].mean(),
             zoom=10,
             pitch=0
         )
@@ -706,16 +742,13 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                 self.set_font('Arial', 'B', 12)
                 self.cell(0, 10, 'Union App Metrics Report', 0, 1, 'C')
                 self.ln(5)
-
             def footer(self):
                 self.set_y(-15)
                 self.set_font('Arial', 'I', 8)
                 self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
         pdf = PDF()
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
-
         start_date_str = 'N/A'
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
@@ -725,10 +758,8 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                 end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
             except (AttributeError, TypeError):
                 pass
-
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
-
         total_trips = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
         total_revenue = float(df['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
@@ -740,7 +771,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         passenger_wallet_balance = float(passenger_wallet_balance) if passenger_wallet_balance is not None else 0.0
         driver_wallet_balance = float(driver_wallet_balance) if driver_wallet_balance is not None else 0.0
         commission_owed = float(commission_owed) if commission_owed is not None else 0.0
-
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, "Key Metrics", 0, 1)
         pdf.set_font('Arial', '', 12)
@@ -755,7 +785,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
-
         return pdf
     except Exception as e:
         st.error(f"Error in create metrics pdf: {str(e)}")
@@ -763,52 +792,43 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
 
 def main():
     st.title("Union App Metrics Dashboard")
-
     try:
         st.cache_data.clear()
-
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
-
-        try:
-            df = load_data()
-            if not df.empty and 'Trip Date' in df.columns:
-                min_date = df['Trip Date'].min().date()
-                max_date = df['Trip Date'].max().date()
-        except:
-            pass
-
+        df = load_data()
+        if not df.empty and 'Trip Date' in df.columns:
+            min_date = df['Trip Date'].min().date()
+            max_date = df['Trip Date'].max().date()
         date_range = st.sidebar.date_input(
             "Date Range",
             value=[min_date, max_date],
             min_value=min_date,
             max_value=max_date
         )
-
-        df = load_data()
         if len(date_range) == 2:
             df = df[(df['Trip Date'].dt.date >= date_range[0]) &
                     (df['Trip Date'].dt.date <= date_range[1])]
-
         df_passengers = load_passengers_data(date_range)
         df_drivers = load_drivers_data(date_range)
-
         if df.empty:
             st.error("No data loaded - please check the backend data file")
             return
-
         if 'Trip Date' not in df.columns:
             st.error("No 'Trip Date' column found in the data")
             return
-
+        # Initialize session state for heatmap
+        if "heatmap_data" not in st.session_state:
+            st.session_state["heatmap_data"] = None
+            st.session_state["heatmap_ready"] = False
+            # Start background thread for heatmap data preparation
+            threading.Thread(target=prepare_heatmap_data, args=(df,), daemon=True).start()
         app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
         riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
-
         unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
         retention_rate, passenger_ratio = calculate_driver_retention_rate(
             riders_onboarded, app_downloads, unique_drivers
         )
-
         st.sidebar.markdown("---")
         st.sidebar.subheader("Export Data")
         output = io.BytesIO()
@@ -831,12 +851,9 @@ def main():
             file_name=f"union_app_metrics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
             mime="application/pdf"
         )
-
         tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Financial", "User Analysis", "Geographic"])
-
         with tab1:
             st.header("Trips Overview")
-
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric("Total Requests", len(df))
@@ -857,13 +874,11 @@ def main():
                     st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
                 else:
                     st.metric("Passenger Search Timeout", "N/A")
-
             status_breakdown_fig = completed_vs_cancelled_daily(df)
             if status_breakdown_fig:
                 st.plotly_chart(status_breakdown_fig, use_container_width=True)
             else:
                 st.warning("Could not generate trip status breakdown chart - missing required data")
-
             col6, col7, col8 = st.columns(3)
             with col6:
                 trips_per_driver(df)
@@ -871,16 +886,13 @@ def main():
                 st.metric("Passenger App Downloads", app_downloads)
             with col8:
                 st.metric("Riders Onboarded", riders_onboarded)
-
             total_trips_by_status(df)
             total_distance_covered(df)
             revenue_by_day(df)
             avg_revenue_per_trip(df)
             total_commission(df)
-
         with tab2:
             st.header("Financial Performance")
-
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = df['Trip Pay Amount Cleaned'].sum()
@@ -889,7 +901,6 @@ def main():
                 total_commission(df)
             with col3:
                 gross_profit(df)
-
             col4, col5, col6 = st.columns(3)
             with col4:
                 st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX")
@@ -897,7 +908,6 @@ def main():
                 st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX")
             with col6:
                 st.metric("Commission Owed", f"{commission_owed:,.0f} UGX")
-
             col7, col8, col9 = st.columns(3)
             with col7:
                 avg_commission_per_trip(df)
@@ -905,21 +915,17 @@ def main():
                 revenue_per_driver(df)
             with col9:
                 driver_earnings_per_trip(df)
-
             col10, col11 = st.columns(2)
             with col10:
                 fare_per_km(df)
             with col11:
                 revenue_share(df)
-
             total_trips_by_type(df)
             payment_method_revenue(df)
             distance_vs_revenue_scatter(df)
             weekday_vs_weekend_analysis(df)
-
         with tab3:
             st.header("User Performance")
-
             col1, col2, col3 = st.columns(3)
             with col1:
                 unique_driver_count(df)
@@ -927,7 +933,6 @@ def main():
                 st.metric("Passenger App Downloads", app_downloads)
             with col3:
                 st.metric("Riders Onboarded", riders_onboarded)
-
             col4, col5 = st.columns(2)
             with col4:
                 st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
@@ -935,16 +940,13 @@ def main():
             with col5:
                 st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
                           help="Number of passengers per active driver")
-
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
             passenger_insights(df)
             passenger_value_segmentation(df)
             top_10_drivers_by_earnings(df)
-
             st.markdown("---")
             st.subheader("Union Staff Trip Completion")
-
             try:
                 if os.path.exists(UNION_STAFF_FILE_PATH):
                     union_staff_df = pd.read_excel(UNION_STAFF_FILE_PATH)
@@ -953,7 +955,6 @@ def main():
                     else:
                         union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
                         st.metric("Total Union Staff Members", len(union_staff_names))
-
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
                             trip_counts = staff_trips_df.groupby('Passenger').size().reset_index(name='Completed Trips')
@@ -963,34 +964,27 @@ def main():
                             st.info("No matching completed trips found for Union Staff members.")
                 else:
                     st.info(f"Union Staff file not found at: {UNION_STAFF_FILE_PATH}")
-
             except Exception as e:
                 st.error(f"Error processing Union Staff file: {e}")
-
         with tab4:
             st.header("Geographic Analysis")
             st.subheader("Heatmap of Completed Trips")
-
             # Initialize session state for button
             if 'show_heatmap' not in st.session_state:
                 st.session_state.show_heatmap = False
-
-            # Button to trigger heatmap generation
+            # Button to trigger heatmap display
             if st.button("Click to View Heatmap"):
                 st.session_state.show_heatmap = True
-
             # Show heatmap only if button is clicked
             if st.session_state.show_heatmap:
-                with st.spinner("Generating heatmap..."):
-                    heatmap_completed_trips(df)
+                with st.spinner("Preparing heatmap, please wait..."):
+                    heatmap_completed_trips()
             else:
-                st.info("Click the button above to generate the heatmap of completed trips.")
-
+                st.info("Click the button above to view the heatmap of completed trips.")
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
             customer_payment_methods(df)
-
     except FileNotFoundError:
         st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
     except Exception as e:
