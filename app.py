@@ -12,12 +12,6 @@ import io
 from fpdf import FPDF
 import uuid
 import threading
-import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import git
 
 # Load environment variables
@@ -25,6 +19,7 @@ load_dotenv()
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
 USERNAME = os.getenv("USERNAME")
 PASSWORD = os.getenv("PASSWORD")
+BASE_URL = "https://backend.bodabodaunion.ug"
 
 # File paths
 PASSENGERS_FILE_PATH = r"./data/PASSENGERS.xlsx"
@@ -42,11 +37,13 @@ REPO_BRANCH = "main"
 os.makedirs(os.path.dirname(DATA_FILE_PATH), exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Selenium setup
-options = webdriver.ChromeOptions()
-prefs = {"download.default_directory": DOWNLOAD_DIR}
-options.add_experimental_option("prefs", prefs)
-WAIT_TIME = 30
+# Expected columns for placeholder files
+EXPECTED_COLUMNS = {
+    "BEER": ["ID", "Trip Date", "Trip Status", "Driver", "Passenger", "Trip Pay Amount", "Company Commission Cleaned", "Distance", "Pay Mode", "From Location", "Dropoff Location", "Trip Hour", "Day of Week", "Month", "Trip Type"],
+    "DRIVERS": ["ID", "Created", "Wallet Balance", "Commission Owed"],
+    "PASSENGERS": ["ID", "Created", "Wallet Balance"],
+    "TRANSACTIONS": ["ID", "Company Amt (UGX)", "Pay Mode"]
+}
 
 # Configure page
 st.set_page_config(
@@ -80,21 +77,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Function to create placeholder Excel file
+def create_placeholder_file(filepath, columns):
+    try:
+        df = pd.DataFrame(columns=columns)
+        df.to_excel(filepath, index=False)
+        print(f"Created placeholder file: {filepath}")
+    except Exception as e:
+        st.warning(f"Error creating placeholder file {filepath}: {str(e)}")
+
 # Function to merge new data with existing data
 def merge_data(existing_file, new_df, unique_key):
     try:
         if os.path.exists(existing_file):
             existing_df = pd.read_excel(existing_file)
-            # Ensure unique_key columns exist
             missing_keys = [key for key in unique_key if key not in new_df.columns or key not in existing_df.columns]
             if missing_keys:
                 st.warning(f"Missing unique key columns {missing_keys} in {existing_file}. Appending all new data.")
                 combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             else:
-                # Convert unique_key to tuple for deduplication
                 existing_df['__key__'] = existing_df[unique_key].apply(tuple, axis=1)
                 new_df['__key__'] = new_df[unique_key].apply(tuple, axis=1)
-                # Keep only new records not in existing data
                 new_records = new_df[~new_df['__key__'].isin(existing_df['__key__'])]
                 combined_df = pd.concat([existing_df, new_records], ignore_index=True)
                 combined_df = combined_df.drop(columns=['__key__'])
@@ -105,39 +108,65 @@ def merge_data(existing_file, new_df, unique_key):
         st.error(f"Error merging data for {existing_file}: {str(e)}")
         return new_df
 
-# Function to download, merge, and convert CSV to Excel
-def download_rename_and_convert_csv(driver, url, page_name, file_name, unique_key):
-    print(f"\nNavigating to {page_name} page...")
-    driver.get(url)
-    time.sleep(WAIT_TIME)
-    print(f"Looking for CSV download button on {page_name} page...")
+# Function to download CSV and merge with existing Excel
+def download_and_merge_csv(session, url, page_name, file_name, unique_key):
     try:
-        csv_elements = WebDriverWait(driver, WAIT_TIME).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//*[contains(text(), 'CSV') or contains(@value, 'CSV')]"))
-        )
-        for element in csv_elements:
-            try:
-                print(f"Attempting to click element: {element.text or element.get_attribute('value')}")
-                element.click()
-                print(f"CSV download initiated for {page_name}")
-                time.sleep(WAIT_TIME)
-                downloaded_file = max([os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)], key=os.path.getctime)
-                df = pd.read_csv(downloaded_file)
-                new_filepath = os.path.join(os.path.dirname(DATA_FILE_PATH), f"{file_name}.xlsx")
-                # Merge with existing data
-                merged_df = merge_data(new_filepath, df, unique_key)
-                merged_df.to_excel(new_filepath, index=False)
-                os.remove(downloaded_file)
-                print(f"File merged and saved to: {new_filepath}")
-                return new_filepath
-            except Exception as click_error:
-                print(f"Failed to click element or process file: {str(click_error)}")
-        else:
-            print(f"No clickable CSV element found on {page_name} page")
+        print(f"\nDownloading {page_name} data...")
+        response = session.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get('content-type', '')
+        if 'text/csv' not in content_type and 'application/octet-stream' not in content_type:
+            print(f"No CSV data found for {page_name}. Response content: {response.text[:100]}")
             return None
-    except TimeoutException:
-        print(f"CSV button not found within the timeout period on {page_name} page.")
+        csv_path = os.path.join(DOWNLOAD_DIR, f"{file_name}.csv")
+        with open(csv_path, 'wb') as f:
+            f.write(response.content)
+        df = pd.read_csv(csv_path)
+        new_filepath = os.path.join(os.path.dirname(DATA_FILE_PATH), f"{file_name}.xlsx")
+        merged_df = merge_data(new_filepath, df, unique_key)
+        merged_df.to_excel(new_filepath, index=False)
+        os.remove(csv_path)
+        print(f"File merged and saved to: {new_filepath}")
+        return new_filepath
+    except Exception as e:
+        print(f"Error downloading {page_name}: {str(e)}")
         return None
+
+# Function to download all data
+def download_all_data():
+    try:
+        session = requests.Session()
+        login_url = f"{BASE_URL}/admin"
+        login_data = {
+            "data[User][username]": USERNAME,
+            "data[User][password]": PASSWORD
+        }
+        print("Logging in...")
+        response = session.post(login_url, data=login_data, allow_redirects=True)
+        response.raise_for_status()
+        if "admin" not in response.url:
+            st.warning("Login failed. Check credentials in .env file.")
+            return []
+        pages = [
+            (f"{BASE_URL}/admin/drivers", "Drivers", "DRIVERS", ["ID"]),
+            (f"{BASE_URL}/admin/users/storeindex", "Active Passengers", "PASSENGERS", ["ID"]),
+            (f"{BASE_URL}/admin/trips", "Trips", "BEER", ["ID"]),
+            (f"{BASE_URL}/admin/transactions", "Transaction Manager", "TRANSACTIONS", ["ID"])
+        ]
+        xlsx_paths = []
+        for url, page_name, file_name, unique_key in pages:
+            file_path = download_and_merge_csv(session, url, page_name, file_name, unique_key)
+            if file_path:
+                xlsx_paths.append(file_path)
+                print(f"✅ Processed {page_name}")
+            else:
+                print(f"❌ Failed to process {page_name}")
+        if xlsx_paths:
+            push_to_git(REPO_PATH, xlsx_paths)
+        return xlsx_paths
+    except Exception as e:
+        st.warning(f"Error downloading data: {str(e)}")
+        return []
 
 # Function to push to Git
 def push_to_git(repo_path, files):
@@ -151,54 +180,6 @@ def push_to_git(repo_path, files):
         print(f"Successfully pushed {len(files)} files to the repository.")
     except Exception as e:
         st.warning(f"Error pushing to Git: {str(e)}")
-
-# Function to download all data
-def download_all_data():
-    driver = None
-    try:
-        driver = webdriver.Chrome(options=options)
-        print("Opening login page...")
-        driver.get("https://backend.bodabodaunion.ug/admin")
-        WebDriverWait(driver, WAIT_TIME).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        print("Filling in username...")
-        username_field = WebDriverWait(driver, WAIT_TIME).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][username]']"))
-        )
-        username_field.send_keys(USERNAME)
-        print("Filling in password...")
-        password_field = WebDriverWait(driver, WAIT_TIME).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][password]']"))
-        )
-        password_field.send_keys(PASSWORD)
-        print("Clicking login button...")
-        login_button = WebDriverWait(driver, WAIT_TIME).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
-        )
-        login_button.click()
-        WebDriverWait(driver, WAIT_TIME).until(EC.url_changes("https://backend.bodabodaunion.ug/admin"))
-        pages = [
-            ("https://backend.bodabodaunion.ug/admin/drivers", "Drivers", "DRIVERS", ["ID"]),
-            ("https://backend.bodabodaunion.ug/admin/users/storeindex", "Active Passengers", "PASSENGERS", ["ID"]),
-            ("https://backend.bodabodaunion.ug/admin/trips", "Trips", "BEER", ["ID"]),
-            ("https://backend.bodabodaunion.ug/admin/transactions", "Transaction Manager", "TRANSACTIONS", ["ID"])
-        ]
-        xlsx_paths = []
-        for url, page_name, file_name, unique_key in pages:
-            file_path = download_rename_and_convert_csv(driver, url, page_name, file_name, unique_key)
-            if file_path:
-                xlsx_paths.append(file_path)
-                print(f"✅ Processed {page_name}")
-            else:
-                print(f"❌ Failed to process {page_name}")
-        if xlsx_paths:
-            push_to_git(REPO_PATH, xlsx_paths)
-        return xlsx_paths
-    except Exception as e:
-        st.warning(f"Error downloading data: {str(e)}")
-        return []
-    finally:
-        if driver:
-            driver.quit()
 
 # Function to load or initialize geocode cache
 def load_geocode_cache():
@@ -251,7 +232,7 @@ def geocode_location(location, cache_df):
         response.raise_for_status()
         data = response.json()
         if data["results"]:
-            geometry = data["results"][0]["geometry"]
+            geometry = "results"[0]["geometry"]
             lat, lng = geometry["lat"], geometry["lng"]
             if lng is not None and lat is not None:
                 new_entry = pd.DataFrame({
@@ -299,7 +280,12 @@ def prepare_heatmap_data(df, session_state_key="heatmap_data"):
 # Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
     try:
+        if not os.path.exists(PASSENGERS_FILE_PATH):
+            create_placeholder_file(PASSENGERS_FILE_PATH, EXPECTED_COLUMNS["PASSENGERS"])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
+        if 'Created' not in df.columns:
+            st.warning("Missing 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=EXPECTED_COLUMNS["PASSENGERS"])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
@@ -310,12 +296,17 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=EXPECTED_COLUMNS["PASSENGERS"])
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
+        if not os.path.exists(DRIVERS_FILE_PATH):
+            create_placeholder_file(DRIVERS_FILE_PATH, EXPECTED_COLUMNS["DRIVERS"])
         df = pd.read_excel(DRIVERS_FILE_PATH)
+        if 'Created' not in df.columns:
+            st.warning("Missing 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=EXPECTED_COLUMNS["DRIVERS"])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
@@ -328,11 +319,13 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=EXPECTED_COLUMNS["DRIVERS"])
 
 # Function to load and merge transactions data
 def load_transactions_data():
     try:
+        if not os.path.exists(TRANSACTIONS_FILE_PATH):
+            create_placeholder_file(TRANSACTIONS_FILE_PATH, EXPECTED_COLUMNS["TRANSACTIONS"])
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
@@ -347,11 +340,16 @@ def load_transactions_data():
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Company Commission Cleaned", "Pay Mode"])
 
 def load_data():
     try:
+        if not os.path.exists(DATA_FILE_PATH):
+            create_placeholder_file(DATA_FILE_PATH, EXPECTED_COLUMNS["BEER"])
         df = pd.read_excel(DATA_FILE_PATH)
+        if 'Trip Date' not in df.columns:
+            st.warning("Missing 'Trip Date' column in BEER.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
@@ -379,7 +377,7 @@ def load_data():
         return df
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
 
 # Define metrics functions
 def passenger_metrics(df_passengers):
@@ -935,11 +933,10 @@ def main():
     st.title("Union App Metrics Dashboard")
     try:
         st.cache_data.clear()
-        # Download and update data
         with st.spinner("Downloading and updating data..."):
             xlsx_paths = download_all_data()
             if not xlsx_paths:
-                st.warning("No new data downloaded. Using existing files.")
+                st.warning("No new data downloaded. Using or creating placeholder files.")
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
         df = load_data()
@@ -958,11 +955,7 @@ def main():
         df_passengers = load_passengers_data(date_range)
         df_drivers = load_drivers_data(date_range)
         if df.empty:
-            st.error("No data loaded - please check the backend data file")
-            return
-        if 'Trip Date' not in df.columns:
-            st.error("No 'Trip Date' column found in the data")
-            return
+            st.warning("No trip data loaded. Dashboard will display limited functionality.")
         if "heatmap_data" not in st.session_state:
             st.session_state["heatmap_data"] = None
             st.session_state["heatmap_ready"] = False
@@ -1002,7 +995,7 @@ def main():
             with col1:
                 st.metric("Total Requests", len(df))
             with col2:
-                completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
+                completed_trips = len(df[df['Trip Status'] == 'Job Completed']) if 'Trip Status' in df.columns else 0
                 st.metric("Completed Trips", completed_trips)
             with col3:
                 st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
@@ -1039,7 +1032,7 @@ def main():
             st.header("Financial Performance")
             col1, col2, col3 = st.columns(3)
             with col1:
-                total_revenue = df['Trip Pay Amount Cleaned'].sum()
+                total_revenue = df['Trip Pay Amount Cleaned'].sum() if 'Trip Pay Amount Cleaned' in df.columns else 0
                 st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX")
             with col2:
                 total_commission(df)
@@ -1126,8 +1119,6 @@ def main():
             peak_hours(df)
             trip_status_trends(df)
             customer_payment_methods(df)
-    except FileNotFoundError:
-        st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
     except Exception as e:
         st.error(f"Error: {e}")
 
