@@ -499,6 +499,9 @@ def passenger_value_segmentation(df):
         if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
+        if len(passenger_revenue.unique()) < 3:
+            st.warning("Not enough unique passenger revenue values for segmentation (requires at least 3 unique values).")
+            return
         bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
         segment_counts = bins.value_counts()
         fig = px.pie(
