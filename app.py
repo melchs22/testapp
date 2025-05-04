@@ -39,7 +39,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # Expected columns for placeholder files
 EXPECTED_COLUMNS = {
-    "BEER": ["ID", "Trip Date", "Trip Status", "Driver", "Passenger", "Trip Pay Amount", "Company Commission Cleaned", "Distance", "Pay Mode", "From Location", "Dropoff Location", "Trip Hour", "Day of Week", "Month", "Trip Type"],
+    "BEER": ["ID", "Trip Date", "Trip Status", "Driver", "Passenger", "Trip Pay Amount", "Company Commission Cleaned", "Trip Distance (KM/Mi)", "Pay Mode", "From Location", "Dropoff Location", "Trip Hour", "Day of Week", "Month", "Trip Type"],
     "DRIVERS": ["ID", "Created", "Wallet Balance", "Commission Owed"],
     "PASSENGERS": ["ID", "Created", "Wallet Balance"],
     "TRANSACTIONS": ["ID", "Company Amt (UGX)", "Pay Mode"]
@@ -111,12 +111,17 @@ def merge_data(existing_file, new_df, unique_key):
 # Function to download CSV and merge with existing Excel
 def download_and_merge_csv(session, url, page_name, file_name, unique_key):
     try:
-        print(f"\nDownloading {page_name} data...")
+        print(f"\nDownloading {page_name} data from {url}...")
         response = session.get(url)
-        response.raise_for_status()
+        print(f"Status Code: {response.status_code}")
+        print(f"Headers: {response.headers}")
         content_type = response.headers.get('content-type', '')
+        print(f"Content-Type: {content_type}")
+        if response.status_code != 200:
+            print(f"Failed to access {page_name}. Response: {response.text[:200]}")
+            return None
         if 'text/csv' not in content_type and 'application/octet-stream' not in content_type:
-            print(f"No CSV data found for {page_name}. Response content: {response.text[:100]}")
+            print(f"No CSV data found for {page_name}. Response content: {response.text[:200]}")
             return None
         csv_path = os.path.join(DOWNLOAD_DIR, f"{file_name}.csv")
         with open(csv_path, 'wb') as f:
@@ -143,9 +148,11 @@ def download_all_data():
         }
         print("Logging in...")
         response = session.post(login_url, data=login_data, allow_redirects=True)
-        response.raise_for_status()
-        if "admin" not in response.url:
-            st.warning("Login failed. Check credentials in .env file.")
+        print(f"Login Status Code: {response.status_code}")
+        print(f"Login Response URL: {response.url}")
+        print(f"Login Headers: {response.headers}")
+        if response.status_code != 200 or "admin" not in response.url:
+            st.warning("Login failed. Check credentials in .env file or website authentication requirements.")
             return []
         pages = [
             (f"{BASE_URL}/admin/drivers", "Drivers", "DRIVERS", ["ID"]),
@@ -232,7 +239,7 @@ def geocode_location(location, cache_df):
         response.raise_for_status()
         data = response.json()
         if data["results"]:
-            geometry = "results"[0]["geometry"]
+            geometry = data["results"][0]["geometry"]
             lat, lng = geometry["lat"], geometry["lng"]
             if lng is not None and lat is not None:
                 new_entry = pd.DataFrame({
@@ -350,6 +357,16 @@ def load_data():
         if 'Trip Date' not in df.columns:
             st.warning("Missing 'Trip Date' column in BEER.xlsx. Returning empty DataFrame.")
             return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
+        # Handle datetime parsing
+        df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
+        invalid_dates = df[df['Trip Date'].isna()]
+        if not invalid_dates.empty:
+            st.warning(f"Found {len(invalid_dates)} rows with invalid 'Trip Date' values. These rows will be excluded.")
+            print(f"Invalid Trip Date values: {invalid_dates['Trip Date'].tolist()}")
+            df = df[df['Trip Date'].notna()]
+        if df.empty:
+            st.warning("No valid data after datetime filtering. Returning empty DataFrame.")
+            return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
@@ -358,7 +375,6 @@ def load_data():
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
-        df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
@@ -367,7 +383,11 @@ def load_data():
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
-        df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
+        if 'Trip Distance (KM/Mi)' in df.columns:
+            df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
+        else:
+            st.warning("No 'Trip Distance (KM/Mi)' column found - creating placeholder")
+            df['Distance'] = 0.0
         if 'Company Commission Cleaned' not in df.columns:
             st.warning("No company commission data found - creating placeholder")
             df['Company Commission Cleaned'] = 0.0
@@ -932,11 +952,18 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
 def main():
     st.title("Union App Metrics Dashboard")
     try:
+        # Sidebar option to skip downloads
+        st.sidebar.subheader("Data Settings")
+        skip_download = st.sidebar.checkbox("Skip Data Download (Use Existing/Placeholder Files)", value=False)
         st.cache_data.clear()
-        with st.spinner("Downloading and updating data..."):
-            xlsx_paths = download_all_data()
-            if not xlsx_paths:
-                st.warning("No new data downloaded. Using or creating placeholder files.")
+        xlsx_paths = []
+        if not skip_download:
+            with st.spinner("Downloading and updating data..."):
+                xlsx_paths = download_all_data()
+                if not xlsx_paths:
+                    st.warning("No new data downloaded. Using or creating placeholder files.")
+        else:
+            st.info("Skipping data download as per user selection.")
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
         df = load_data()
