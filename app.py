@@ -86,7 +86,7 @@ def load_passengers_data(date_range=None):
             st.warning(f"Passengers file not found at {PASSENGERS_FILE_PATH}. Returning empty DataFrame.")
             return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
-        if 'ID' not in df.columns or 'Created' not in df.columns:
+        if 'Id' not in df.columns or 'Created' not in df.columns:
             st.warning("Missing 'Id' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
             return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
