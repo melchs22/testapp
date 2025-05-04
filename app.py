@@ -19,7 +19,7 @@ OPENCAGE_API_KEY = os.getenv('OPENCAGE_API_KEY')
 # Configure page
 st.set_page_config(
     page_title="Union App Metrics Dashboard",
-    page_icon=r"C:\Users\TUTU\PyCharmMiscProject\your_image.png",
+    page_icon=r"./your_image.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -47,96 +47,106 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
 DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
 DATA_FILE_PATH = r"./BEER.xlsx"
 TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
 
-# Function to extract UGX amounts from any column
-def extract_ugx_amounts(value):
+# Improved function to extract UGX amounts from any column
+def extract_ugx_amount(value):
     try:
         if pd.isna(value):
             return 0.0
-        amounts = re.findall(r'UGX\s*([\d,]+)', str(value))
-        return sum(float(amount.replace(',', '')) for amount in amounts) if amounts else 0.0
+        # Handle formats like: "UGX1000", "UGX 1,000", "1,000 UGX", etc.
+        value_str = str(value).upper().replace(",", "").replace(" ", "")
+        amounts = re.findall(r'UGX([\d.]+)|([\d.]+)UGX', value_str)
+        if amounts:
+            # Flatten the matches and remove empty strings
+            clean_amounts = [amt for group in amounts for amt in group if amt]
+            if clean_amounts:
+                return sum(float(amt) for amt in clean_amounts)
+        # Try to convert directly if no UGX pattern found
+        return float(value_str) if value_str.replace(".", "").isdigit() else 0.0
     except:
         return 0.0
 
-# Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
     try:
         df = pd.read_excel(PASSENGERS_FILE_PATH)
-        df['Created'] = pd.to_datetime(df['Created '], errors='coerce')
+        df['Created Time'] = pd.to_datetime(df['Created Time'], errors='coerce')
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
-            df = df[(df['Created'].dt.date >= start_date) &
-                    (df['Created'].dt.date <= end_date)]
+            df = df[(df['Created Time'].dt.date >= start_date) &
+                    (df['Created Time'].dt.date <= end_date)]
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
         return pd.DataFrame()
 
-# Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
         df = pd.read_excel(DRIVERS_FILE_PATH)
-        df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
+        df['Created Time'] = pd.to_datetime(df['Created Time'], errors='coerce')
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
-            df = df[(df['Created'].dt.date >= start_date) &
-                    (df['Created'].dt.date <= end_date)]
+            df = df[(df['Created Time'].dt.date >= start_date) &
+                    (df['Created Time'].dt.date <= end_date)]
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
         return pd.DataFrame()
 
-# Function to load and merge transactions data
-def load_and_merge_transactions():
+def load_transactions_data(date_range=None):
     try:
-        transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
+        df = pd.read_excel(TRANSACTIONS_FILE_PATH)
         
-        # Extract UGX amounts from all relevant columns
-        amount_columns = [col for col in transactions_df.columns if 'UGX' in str(col)]
-        for col in amount_columns:
-            transactions_df[f"{col}_Cleaned"] = transactions_df[col].apply(extract_ugx_amounts)
+        # Convert date column if exists
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            if date_range and len(date_range) == 2:
+                start_date, end_date = date_range
+                df = df[(df['Date'].dt.date >= start_date) &
+                        (df['Date'].dt.date <= end_date)]
         
-        # Ensure we have the required columns
-        if 'Company Amt (UGX)' in transactions_df.columns:
-            transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)_Cleaned']
-        if 'Pay Mode' in transactions_df.columns:
-            transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
-        
-        return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
+        # Process Company Amt (UGX)
+        if 'Company Amt (UGX)' in df.columns:
+            df['Company Commission Cleaned'] = df['Company Amt (UGX)'].apply(extract_ugx_amount)
+        else:
+            st.warning("No 'Company Amt (UGX)' column found in transactions data")
+            df['Company Commission Cleaned'] = 0.0
+            
+        # Process Pay Mode
+        if 'Pay Mode' in df.columns:
+            df['Pay Mode'] = df['Pay Mode'].fillna('Unknown')
+        else:
+            st.warning("No 'Pay Mode' column found in transactions data")
+            df['Pay Mode'] = 'Unknown'
+            
+        return df[['Company Commission Cleaned', 'Pay Mode', 'Date']] if 'Date' in df.columns else df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
         return pd.DataFrame()
 
-def load_data():
+def load_data(date_range=None):
     try:
         # Load main data
         df = pd.read_excel(DATA_FILE_PATH)
-
-        # Load and merge transactions data
-        transactions_df = load_and_merge_transactions()
-        if not transactions_df.empty:
-            df = pd.concat([df, transactions_df], axis=1)
-
-        # Data cleaning
+        
+        # Load transactions data with date filtering
+        transactions_df = load_transactions_data(date_range)
+        
+        # Data cleaning for main data
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
 
-        # Process all amount columns containing UGX
-        amount_columns = [col for col in df.columns if 'UGX' in str(col)]
-        for col in amount_columns:
-            df[f"{col}_Cleaned"] = df[col].apply(extract_ugx_amounts)
-
-        # Process Trip Pay Amount if exists
+        # Process Trip Pay Amount
         if 'Trip Pay Amount' in df.columns:
-            df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount_Cleaned'] if 'Trip Pay Amount_Cleaned' in df.columns else df['Trip Pay Amount'].apply(extract_ugx_amounts)
+            df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
@@ -144,15 +154,21 @@ def load_data():
         # Process Distance
         df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
 
-        # Process Company Commission
+        # Process Company Commission - initialize if doesn't exist
         if 'Company Commission Cleaned' not in df.columns:
-            if 'Company Amt (UGX)' in df.columns:
-                df['Company Commission Cleaned'] = df['Company Amt (UGX)_Cleaned'] if 'Company Amt (UGX)_Cleaned' in df.columns else df['Company Amt (UGX)'].apply(extract_ugx_amounts)
-            else:
-                st.warning("No company commission data found - creating placeholder")
-                df['Company Commission Cleaned'] = 0.0
+            df['Company Commission Cleaned'] = 0.0
+            
+        # Merge transactions data if available
+        if not transactions_df.empty:
+            # Sum commission from transactions
+            commission_from_transactions = transactions_df['Company Commission Cleaned'].sum()
+            df['Company Commission Cleaned'] = df['Company Commission Cleaned'] + commission_from_transactions
+            
+            # Update Pay Mode if not in main data
+            if 'Pay Mode' not in df.columns:
+                df['Pay Mode'] = transactions_df['Pay Mode'].mode()[0] if not transactions_df.empty else 'Unknown'
 
-        # Process Pay Mode
+        # Ensure Pay Mode exists
         if 'Pay Mode' not in df.columns:
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
@@ -163,11 +179,11 @@ def load_data():
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
 
-# [Rest of your existing functions remain the same...]
+# [All your existing metric calculation and visualization functions remain the same...]
 
 def main():
     st.title("Union App Metrics Dashboard")
-    UNION_STAFF_FILE_PATH = r"C:\Users\TUTU\Downloads\UNION STAFF.xlsx"
+    UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
     try:
         # Clear any cached data to ensure fresh load
@@ -179,10 +195,10 @@ def main():
 
         # Try to get min/max dates from trip data if available
         try:
-            df = load_data()
-            if not df.empty and 'Trip Date' in df.columns:
-                min_date = df['Trip Date'].min().date()
-                max_date = df['Trip Date'].max().date()
+            test_df = load_data()
+            if not test_df.empty and 'Trip Date' in test_df.columns:
+                min_date = test_df['Trip Date'].min().date()
+                max_date = test_df['Trip Date'].max().date()
         except:
             pass
 
@@ -194,11 +210,8 @@ def main():
         )
 
         # Load all data with date filtering
-        df = load_data()
-        if len(date_range) == 2:
-            df = df[(df['Trip Date'].dt.date >= date_range[0]) &
-                    (df['Trip Date'].dt.date <= date_range[1])]
-
+        df = load_data(date_range)
+        
         # Load passenger and driver data with the same date filtering
         df_passengers = load_passengers_data(date_range)
         df_drivers = load_drivers_data(date_range)
@@ -233,9 +246,10 @@ def main():
             file_name=f"union_app_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
         pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio,
-                                 app_downloads, riders_onboarded, passenger_wallet_balance,
-                                 driver_wallet_balance, commission_owed)
+                               app_downloads, riders_onboarded, passenger_wallet_balance,
+                               driver_wallet_balance, commission_owed)
         pdf_output = pdf.output(dest='S').encode('latin1')
         st.sidebar.download_button(
             label="📄 Download Metrics Report (PDF)",
@@ -387,7 +401,7 @@ def main():
             customer_payment_methods(df)
 
     except FileNotFoundError:
-        st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
+        st.error("Data file not found. Please ensure the Excel files are in the correct directory.")
     except Exception as e:
         st.error(f"Error: {e}")
 
