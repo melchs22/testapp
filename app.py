@@ -274,7 +274,7 @@ def trips_per_driver(df):
         if 'Driver' not in df.columns:
             st.metric("Trips per Driver", "N/A")
             return
-        trips_by_driver = df سودي_سامي_عبدالرحمن.groupby('Driver').size()
+        trips_by_driver = df.groupby('Driver').size()
         avg_trips = trips_by_driver.mean() if not trips_by_driver.empty else 0
         st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}")
     except Exception as e:
