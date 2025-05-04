@@ -231,8 +231,8 @@ def calculate_passenger_search_timeout(df):
         if 'Trip Status' not in df.columns:
             return None
         total_trips = len(df)
-        timeout_trips = len(df[df['Trip Status'].str.contains('Timeout', case=False, na=False)])
-        return (timeout_trips / total_trips * 100) if total_trips > 0 else 0.0
+        expired_trips = len(df[df['Trip Status'].str.lower() == 'expired'])
+        return (expired_trips / total_trips * 100) if total_trips > 0 else 0.0
     except:
         return None
 
