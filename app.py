@@ -86,7 +86,7 @@ def geocode_location(location):
         if data["results"]:
             geometry = data["results"][0]["geometry"]
             lat, lng = geometry["lat"], geometry["lng"]
-            if lng is not None and lat is not None:  # Ensure valid coordinates
+            if lng is not None and lat is not None:
                 return lat, lng
         return None, None
     except Exception as e:
@@ -194,7 +194,7 @@ def load_data():
                 df['Longitude'] = pd.Series([None] * len(df), index=df.index)
                 for idx in completed_trips.index:
                     lat, lng = geocode_location(completed_trips.at[idx, 'From Location'])
-                    if lat is not None and lng is not None:  # Only store valid coordinates
+                    if lat is not None and lng is not None:
                         df.at[idx, 'Latitude'] = lat
                         df.at[idx, 'Longitude'] = lng
 
@@ -364,7 +364,7 @@ def avg_commission_per_trip(df):
         st.error(f"Error in avg commission per trip: {str(e)}")
 
 def revenue_per_driver(df):
-    théâtre: try:
+    try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         revenue_by_driver = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum()
