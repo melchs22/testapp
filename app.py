@@ -40,7 +40,7 @@ st.markdown("""
     .stMetric label, .stMetric div {
         color: black !important;
     }
-    .stPlotlyChart, .stPydeckChart {
+    .stPlotlyChart, .stPydeckChart아이테크놀로지 {
         background-color: white;
         border-radius: 10px;
         padding: 15px;
@@ -160,7 +160,7 @@ def load_data():
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
 
-# Define missing metrics functions
+# Define metrics functions
 def passenger_metrics(df_passengers):
     try:
         app_downloads = len(df_passengers) if not df_passengers.empty else 0
@@ -413,7 +413,7 @@ def weekday_vs_weekend_analysis(df):
         fig = px.bar(
             x=['Weekday', 'Weekend'],
             y=revenue_by_period.values,
-            title="Weekday vs Weekend Revenue",
+            title=" kwest vs Weekend Revenue",
             labels={'x': 'Period', 'y': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -634,18 +634,21 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        pdf.cell(0, 10, f"Date Range: {date_range[0]} to {date_range[1]}", 0, 1)
+        # Convert date_range to strings
+        start_date_str = date_range[0].strftime('%Y-%m-%d') if date_range and len(date_range) > 0 else 'N/A'
+        end_date_str = date_range[1].strftime('%Y-%m-%d') if date_range and len(date_range) > 1 else 'N/A'
+        pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
 
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, "Key Metrics", 0, 1)
         pdf.set_font('Arial', '', 12)
-        pdf.cell(0, 10, f"Total Trips: {len(df)}", 0, 1)
-        pdf.cell(0, 10, f"Completed Trips: {len(df[df['Trip Status'] == 'Job Completed'])}", 0, 1)
+        pdf.cell(0, 10, f"Total Trips: {int(len(df))}", 0, 1)
+        pdf.cell(0, 10, f"Completed Trips: {int(len(df[df['Trip Status'] == 'Job Completed']))}", 0, 1)
         pdf.cell(0, 10, f"Total Revenue: {df['Trip Pay Amount Cleaned'].sum():,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Total Commission: {df['Company Commission Cleaned'].sum():,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Passenger App Downloads: {app_downloads}", 0, 1)
-        pdf.cell(0, 10, f"Riders Onboarded: {riders_onboarded}", 0, 1)
+        pdf.cell(0, 10, f"Passenger App Downloads: {int(app_downloads)}", 0, 1)
+        pdf.cell(0, 10, f"Riders Onboarded: {int(riders_onboarded)}", 0, 1)
         pdf.cell(0, 10, f"Driver Retention Rate: {retention_rate:.1f}%", 0, 1)
         pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", 0, 1)
         pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
