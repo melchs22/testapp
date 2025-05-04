@@ -66,12 +66,12 @@ def extract_ugx_amounts(value):
 def load_passengers_data(date_range=None):
     try:
         df = pd.read_excel(PASSENGERS_FILE_PATH)
-        df['Created Time'] = pd.to_datetime(df['Created Time'], errors='coerce')
+        df['Created'] = pd.to_datetime(df['Created '], errors='coerce')
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
-            df = df[(df['Created Time'].dt.date >= start_date) &
-                    (df['Created Time'].dt.date <= end_date)]
+            df = df[(df['Created'].dt.date >= start_date) &
+                    (df['Created'].dt.date <= end_date)]
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
@@ -81,12 +81,12 @@ def load_passengers_data(date_range=None):
 def load_drivers_data(date_range=None):
     try:
         df = pd.read_excel(DRIVERS_FILE_PATH)
-        df['Created Time'] = pd.to_datetime(df['Created Time'], errors='coerce')
+        df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
-            df = df[(df['Created Time'].dt.date >= start_date) &
-                    (df['Created Time'].dt.date <= end_date)]
+            df = df[(df['Created'].dt.date >= start_date) &
+                    (df['Created'].dt.date <= end_date)]
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
