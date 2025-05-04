@@ -10,7 +10,6 @@ import re
 from dotenv import load_dotenv
 import io
 from fpdf import FPDF
-import base64
 import uuid
 
 # Load environment variables
@@ -37,7 +36,6 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
- Rudd
     .stMetric label, .stMetric div {
         color: black !important;
     }
@@ -87,7 +85,9 @@ def geocode_location(location):
         data = response.json()
         if data["results"]:
             geometry = data["results"][0]["geometry"]
-            return geometry["lat"], geometry["lng"]
+            lat, lng = geometry["lat"], geometry["lng"]
+            if lng is not None and lat is not None:  # Ensure valid coordinates
+                return lat, lng
         return None, None
     except Exception as e:
         st.warning(f"Error geocoding {location}: {str(e)}")
@@ -186,16 +186,17 @@ def load_data():
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
 
-        # Geocode pickup locations for completed trips
-        if 'Pickup Location' in df.columns and 'Trip Status' in df.columns:
+        # Geocode 'From Location' for completed trips
+        if 'From Location' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             if not completed_trips.empty:
                 df['Latitude'] = pd.Series([None] * len(df), index=df.index)
                 df['Longitude'] = pd.Series([None] * len(df), index=df.index)
                 for idx in completed_trips.index:
-                    lat, lng = geocode_location(completed_trips.at[idx, 'Pickup Location'])
-                    df.at[idx, 'Latitude'] = lat
-                    df.at[idx, 'Longitude'] = lng
+                    lat, lng = geocode_location(completed_trips.at[idx, 'From Location'])
+                    if lat is not None and lng is not None:  # Only store valid coordinates
+                        df.at[idx, 'Latitude'] = lat
+                        df.at[idx, 'Longitude'] = lng
 
         return df
 
@@ -217,7 +218,6 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
-        # Sum only negative Wallet Balance values for commission owed
         commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
@@ -364,7 +364,7 @@ def avg_commission_per_trip(df):
         st.error(f"Error in avg commission per trip: {str(e)}")
 
 def revenue_per_driver(df):
-    try:
+    théâtre: try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         revenue_by_driver = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum()
@@ -577,9 +577,9 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
 
 def most_frequent_locations(df):
     try:
-        if 'Pickup Location' not in df.columns or 'Dropoff Location' not in df.columns:
+        if 'From Location' not in df.columns or 'Dropoff Location' not in df.columns:
             return
-        pickup_counts = df['Pickup Location'].value_counts().head(5)
+        pickup_counts = df['From Location'].value_counts().head(5)
         dropoff_counts = df['Dropoff Location'].value_counts().head(5)
         col1, col2 = st.columns(2)
         with col1:
@@ -714,7 +714,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        # Convert date_range to strings, handling invalid or missing dates
         start_date_str = 'N/A'
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
@@ -728,7 +727,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
 
-        # Ensure all numeric values are floats or integers
         total_trips = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
         total_revenue = float(df['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
@@ -956,7 +954,6 @@ def main():
 
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
-                            # Count completed trips per staff member
                             trip_counts = staff_trips_df.groupby('Passenger').size().reset_index(name='Completed Trips')
                             staff_trips_df = staff_trips_df.merge(trip_counts, on='Passenger', how='left')
                             st.dataframe(staff_trips_df)
