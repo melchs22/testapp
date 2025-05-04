@@ -40,7 +40,7 @@ st.markdown("""
     .stMetric label, .stMetric div {
         color: black !important;
     }
-    .stPlotlyChart, .stPydeckChart아이테크놀로지 {
+    .stPlotlyChart, .stPydeckChart {
         background-color: white;
         border-radius: 10px;
         padding: 15px;
@@ -413,7 +413,7 @@ def weekday_vs_weekend_analysis(df):
         fig = px.bar(
             x=['Weekday', 'Weekend'],
             y=revenue_by_period.values,
-            title=" kwest vs Weekend Revenue",
+            title="Weekday vs Weekend Revenue",
             labels={'x': 'Period', 'y': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -634,9 +634,20 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        # Convert date_range to strings
-        start_date_str = date_range[0].strftime('%Y-%m-%d') if date_range and len(date_range) > 0 else 'N/A'
-        end_date_str = date_range[1].strftime('%Y-%m-%d') if date_range and len(date_range) > 1 else 'N/A'
+        # Convert date_range to strings, handling invalid or missing dates
+        start_date_str = 'N/A'
+        end_date_str = 'N/A'
+        if date_range and len(date_range) == 2:
+            start_date, end_date = date_range
+            if isinstance(start_date, (datetime, pd.Timestamp)):
+                start_date_str = start_date.strftime('%Y-%m-%d')
+            elif isinstance(start_date, str):
+                start_date_str = start_date
+            if isinstance(end_date, (datetime, pd.Timestamp)):
+                end_date_str = end_date.strftime('%Y-%m-%d')
+            elif isinstance(end_date, str):
+                end_date_str = end_date
+
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
 
@@ -645,15 +656,15 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.set_font('Arial', '', 12)
         pdf.cell(0, 10, f"Total Trips: {int(len(df))}", 0, 1)
         pdf.cell(0, 10, f"Completed Trips: {int(len(df[df['Trip Status'] == 'Job Completed']))}", 0, 1)
-        pdf.cell(0, 10, f"Total Revenue: {df['Trip Pay Amount Cleaned'].sum():,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Total Commission: {df['Company Commission Cleaned'].sum():,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Revenue: {float(df['Trip Pay Amount Cleaned'].sum()):,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Commission: {float(df['Company Commission Cleaned'].sum()):,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Passenger App Downloads: {int(app_downloads)}", 0, 1)
         pdf.cell(0, 10, f"Riders Onboarded: {int(riders_onboarded)}", 0, 1)
-        pdf.cell(0, 10, f"Driver Retention Rate: {retention_rate:.1f}%", 0, 1)
-        pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", 0, 1)
-        pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Driver Retention Rate: {float(retention_rate):.1f}%", 0, 1)
+        pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {float(passenger_ratio):.1f}", 0, 1)
+        pdf.cell(0, 10, f"Passenger Wallet Balance: {float(passenger_wallet_balance):,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Driver Wallet Balance: {float(driver_wallet_balance):,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Commission Owed: {float(commission_owed):,.0f} UGX", 0, 1)
 
         return pdf
     except Exception as e:
