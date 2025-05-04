@@ -55,16 +55,22 @@ DATA_FILE_PATH = r"./BEER.xlsx"
 TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
 UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
-# Function to extract UGX amounts from any column
+# Enhanced function to extract UGX amounts from any column
 def extract_ugx_amount(value):
     try:
-        if pd.isna(value):
+        if pd.isna(value) or value is None:
             return 0.0
-        amounts = re.findall(r'UGX\s*([\d,]+)', str(value))
+        # Convert to string and clean
+        value_str = str(value).replace('UGX', '').replace(',', '').strip()
+        # Extract numeric part using regex
+        amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
         if amounts:
-            return sum(float(amount.replace(',', '')) for amount in amounts)
-        return float(str(value).replace(',', '')) if str(value).replace(',', '').isdigit() else 0.0
-    except:
+            return float(amounts[0])
+        # Try direct conversion if it's a numeric string
+        if value_str.replace('.', '').isdigit():
+            return float(value_str)
+        return 0.0
+    except (ValueError, TypeError):
         return 0.0
 
 # Function to load passengers data with date filtering
@@ -72,6 +78,8 @@ def load_passengers_data(date_range=None):
     try:
         df = pd.read_excel(PASSENGERS_FILE_PATH)
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
+        if 'Wallet Balance' in df.columns:
+            df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
@@ -87,6 +95,10 @@ def load_drivers_data(date_range=None):
     try:
         df = pd.read_excel(DRIVERS_FILE_PATH)
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
+        if 'Wallet Balance' in df.columns:
+            df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
+        if 'Commission Owed' in df.columns:
+            df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
 
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
@@ -164,7 +176,7 @@ def load_data():
 def passenger_metrics(df_passengers):
     try:
         app_downloads = len(df_passengers) if not df_passengers.empty else 0
-        passenger_wallet_balance = df_passengers['Wallet Balance'].sum() if 'Wallet Balance' in df_passengers.columns else 0.0
+        passenger_wallet_balance = float(df_passengers['Wallet Balance'].sum()) if 'Wallet Balance' in df_passengers.columns else 0.0
         return app_downloads, passenger_wallet_balance
     except Exception as e:
         st.error(f"Error in passenger metrics: {str(e)}")
@@ -173,8 +185,8 @@ def passenger_metrics(df_passengers):
 def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
-        driver_wallet_balance = df_drivers['Wallet Balance'].sum() if 'Wallet Balance' in df_drivers.columns else 0.0
-        commission_owed = df_drivers['Commission Owed'].sum() if 'Commission Owed' in df_drivers.columns else 0.0
+        driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
+        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns else 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
@@ -184,7 +196,7 @@ def calculate_driver_retention_rate(riders_onboarded, app_downloads, unique_driv
     try:
         retention_rate = (unique_drivers / riders_onboarded * 100) if riders_onboarded > 0 else 0.0
         passenger_ratio = (app_downloads / unique_drivers) if unique_drivers > 0 else 0.0
-        return retention_rate, passenger_ratio
+        return float(retention_rate), float(passenger_ratio)
     except Exception as e:
         st.error(f"Error calculating retention rate: {str(e)}")
         return 0.0, 0.0
@@ -639,32 +651,42 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
-            if isinstance(start_date, (datetime, pd.Timestamp)):
-                start_date_str = start_date.strftime('%Y-%m-%d')
-            elif isinstance(start_date, str):
-                start_date_str = start_date
-            if isinstance(end_date, (datetime, pd.Timestamp)):
-                end_date_str = end_date.strftime('%Y-%m-%d')
-            elif isinstance(end_date, str):
-                end_date_str = end_date
+            try:
+                start_date_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
+                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
+            except (AttributeError, TypeError):
+                pass
 
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
 
+        # Ensure all numeric values are floats or integers
+        total_trips = int(len(df))
+        completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
+        total_revenue = float(df['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
+        total_commission = float(df['Company Commission Cleaned'].sum()) if 'Company Commission Cleaned' in df.columns else 0.0
+        app_downloads = int(app_downloads) if app_downloads is not None else 0
+        riders_onboarded = int(riders_onboarded) if riders_onboarded is not None else 0
+        retention_rate = float(retention_rate) if retention_rate is not None else 0.0
+        passenger_ratio = float(passenger_ratio) if passenger_ratio is not None else 0.0
+        passenger_wallet_balance = float(passenger_wallet_balance) if passenger_wallet_balance is not None else 0.0
+        driver_wallet_balance = float(driver_wallet_balance) if driver_wallet_balance is not None else 0.0
+        commission_owed = float(commission_owed) if commission_owed is not None else 0.0
+
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, "Key Metrics", 0, 1)
         pdf.set_font('Arial', '', 12)
-        pdf.cell(0, 10, f"Total Trips: {int(len(df))}", 0, 1)
-        pdf.cell(0, 10, f"Completed Trips: {int(len(df[df['Trip Status'] == 'Job Completed']))}", 0, 1)
-        pdf.cell(0, 10, f"Total Revenue: {float(df['Trip Pay Amount Cleaned'].sum()):,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Total Commission: {float(df['Company Commission Cleaned'].sum()):,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Passenger App Downloads: {int(app_downloads)}", 0, 1)
-        pdf.cell(0, 10, f"Riders Onboarded: {int(riders_onboarded)}", 0, 1)
-        pdf.cell(0, 10, f"Driver Retention Rate: {float(retention_rate):.1f}%", 0, 1)
-        pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {float(passenger_ratio):.1f}", 0, 1)
-        pdf.cell(0, 10, f"Passenger Wallet Balance: {float(passenger_wallet_balance):,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Driver Wallet Balance: {float(driver_wallet_balance):,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Commission Owed: {float(commission_owed):,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Trips: {total_trips}", 0, 1)
+        pdf.cell(0, 10, f"Completed Trips: {completed_trips}", 0, 1)
+        pdf.cell(0, 10, f"Total Revenue: {total_revenue:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Commission: {total_commission:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Passenger App Downloads: {app_downloads}", 0, 1)
+        pdf.cell(0, 10, f"Riders Onboarded: {riders_onboarded}", 0, 1)
+        pdf.cell(0, 10, f"Driver Retention Rate: {retention_rate:.1f}%", 0, 1)
+        pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", 0, 1)
+        pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
 
         return pdf
     except Exception as e:
