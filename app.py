@@ -520,10 +520,17 @@ def passenger_insights(df):
 
 def top_passengers_by_trips(df):
     try:
-        if 'Passenger' not in df.columns:
+        if 'Passenger' not in df.columns or 'Trip Status' not in df.columns:
+            st.warning("Missing 'Passenger' or 'Trip Status' column. Cannot display top passengers by trip count.")
             return
-        top_passengers = df.groupby('Passenger').size().nlargest(5).reset_index(name='Trip Count')
-        st.subheader("Top 5 Passengers by Trip Count")
+        # Filter for completed trips only
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        if completed_trips.empty:
+            st.info("No completed trips found to display top passengers.")
+            return
+        # Group by Passenger and count completed trips
+        top_passengers = completed_trips.groupby('Passenger').size().nlargest(5).reset_index(name='Trip Count')
+        st.subheader("Top 5 Passengers by Completed Trip Count")
         st.dataframe(top_passengers, use_container_width=True)
     except Exception as e:
         st.error(f"Error in top passengers by trips: {str(e)}")
