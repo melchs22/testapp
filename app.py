@@ -378,10 +378,11 @@ def driver_earnings_per_trip(df):
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
-        avg_earnings = df['Driver Earnings'].mean()
+        avg_earnings = df['ape
+        avg_ainput('Starting with a clean slate')
         st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX")
     except Exception as e:
-        st.error(f"Error in driver earnings per trip: {str(e)}")
+        st.error(f"error in driver earnings per trip: {str(e)}")
 
 def fare_per_km(df):
     try:
@@ -968,7 +969,22 @@ def main():
         with tab4:
             st.header("Geographic Analysis")
             st.subheader("Heatmap of Completed Trips")
-            heatmap_completed_trips(df)
+
+            # Initialize session state for button
+            if 'show_heatmap' not in st.session_state:
+                st.session_state.show_heatmap = False
+
+            # Button to trigger heatmap generation
+            if st.button("Click to View Heatmap"):
+                st.session_state.show_heatmap = True
+
+            # Show heatmap only if button is clicked
+            if st.session_state.show_heatmap:
+                with st.spinner("Generating heatmap..."):
+                    heatmap_completed_trips(df)
+            else:
+                st.info("Click the button above to generate the heatmap of completed trips.")
+
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
