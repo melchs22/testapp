@@ -46,6 +46,12 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
+    .stDataFrame {
+        background-color: white;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,11 +84,11 @@ def load_passengers_data(date_range=None):
     try:
         if not os.path.exists(PASSENGERS_FILE_PATH):
             st.warning(f"Passengers file not found at {PASSENGERS_FILE_PATH}. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
-        if 'Id' not in df.columns or 'Created' not in df.columns:
-            st.warning("Missing 'Id' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+        if 'ID' not in df.columns or 'Created' not in df.columns:
+            st.warning("Missing 'ID' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
@@ -97,18 +103,18 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
         if not os.path.exists(DRIVERS_FILE_PATH):
             st.warning(f"Drivers file not found at {DRIVERS_FILE_PATH}. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df = pd.read_excel(DRIVERS_FILE_PATH)
-        if 'Id' not in df.columns or 'Created' not in df.columns:
-            st.warning("Missing 'Id' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+        if 'ID' not in df.columns or 'Created' not in df.columns:
+            st.warning("Missing 'ID' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
@@ -123,7 +129,7 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
+        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
 
 # Function to load and merge transactions data
 def load_transactions_data():
@@ -185,7 +191,7 @@ def load_data():
 # Define metrics functions
 def passenger_metrics(df_passengers):
     try:
-        app_downloads = df_passengers['Id'].nunique() if not df_passengers.empty else 0
+        app_downloads = df_passengers['ID'].nunique() if not df_passengers.empty else 0
         passenger_wallet_balance = float(df_passengers['Wallet Balance'].sum()) if 'Wallet Balance' in df_passengers.columns and not df_passengers.empty else 0.0
         return app_downloads, passenger_wallet_balance
     except Exception as e:
@@ -194,7 +200,7 @@ def passenger_metrics(df_passengers):
 
 def driver_metrics(df_drivers):
     try:
-        riders_onboarded = df_drivers['Id'].nunique() if not df_drivers.empty else 0
+        riders_onboarded = df_drivers['ID'].nunique() if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns and not df_drivers.empty:
             driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
             commission_owed = float(abs(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()))
@@ -241,6 +247,9 @@ def completed_vs_cancelled_daily(df):
         if 'Trip Status' not in df.columns or 'Trip Date' not in df.columns:
             return None
         status_df = df.groupby([df['Trip Date'].dt.date, 'Trip Status']).size().unstack(fill_value=0)
+        # Ensure dates do not extend beyond the latest available date
+        max_date = df['Trip Date'].dt.date.max()
+        status_df = status_df[status_df.index <= max_date]
         fig = go.Figure()
         for status in status_df.columns:
             fig.add_trace(go.Scatter(
@@ -253,7 +262,8 @@ def completed_vs_cancelled_daily(df):
             title="Daily Trip Status Breakdown",
             xaxis_title="Date",
             yaxis_title="Number of Trips",
-            template="plotly_white"
+            template="plotly_white",
+            xaxis=dict(range=[status_df.index.min(), max_date])
         )
         return fig
     except:
@@ -264,7 +274,7 @@ def trips_per_driver(df):
         if 'Driver' not in df.columns:
             st.metric("Trips per Driver", "N/A")
             return
-        trips_by_driver = df.groupby('Driver').size()
+        trips_by_driver = df سودي_سامي_عبدالرحمن.groupby('Driver').size()
         avg_trips = trips_by_driver.mean() if not trips_by_driver.empty else 0
         st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}")
     except Exception as e:
@@ -298,12 +308,16 @@ def revenue_by_day(df):
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Trip Date' not in df.columns:
             return
         daily_revenue = df.groupby(df['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum()
+        # Ensure dates do not extend beyond the latest available date
+        max_date = df['Trip Date'].dt.date.max()
+        daily_revenue = daily_revenue[daily_revenue.index <= max_date]
         fig = px.line(
             x=daily_revenue.index,
             y=daily_revenue.values,
             title="Daily Revenue Trend",
             labels={'x': 'Date', 'y': 'Revenue (UGX)'}
         )
+        fig.update_layout(xaxis=dict(range=[daily_revenue.index.min(), max_date]))
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error in revenue by day: {str(e)}")
@@ -459,15 +473,11 @@ def top_drivers_by_revenue(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
-        top_drivers = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
-        fig = px.bar(
-            x=top_drivers.values,
-            y=top_drivers.index,
-            orientation='h',
-            title="Top 5 Drivers by Revenue",
-            labels={'x': 'Revenue (UGX)', 'y': 'Driver'}
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        top_drivers = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5).reset_index()
+        top_drivers.columns = ['Driver', 'Total Revenue (UGX)']
+        top_drivers['Total Revenue (UGX)'] = top_drivers['Total Revenue (UGX)'].map('{:,.0f}'.format)
+        st.subheader("Top 5 Drivers by Revenue")
+        st.dataframe(top_drivers, use_container_width=True)
     except Exception as e:
         st.error(f"Error in top drivers by revenue: {str(e)}")
 
@@ -512,15 +522,9 @@ def top_passengers_by_trips(df):
     try:
         if 'Passenger' not in df.columns:
             return
-        top_passengers = df.groupby('Passenger').size().nlargest(5)
-        fig = px.bar(
-            x=top_passengers.values,
-            y=top_passengers.index,
-            orientation='h',
-            title="Top 5 Passengers by Trip Count",
-            labels={'x': 'Number of Trips', 'y': 'Passenger'}
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        top_passengers = df.groupby('Passenger').size().nlargest(5).reset_index(name='Trip Count')
+        st.subheader("Top 5 Passengers by Trip Count")
+        st.dataframe(top_passengers, use_container_width=True)
     except Exception as e:
         st.error(f"Error in top passengers by trips: {str(e)}")
 
@@ -529,15 +533,11 @@ def top_10_drivers_by_earnings(df):
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
-        top_drivers = df.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
-        fig = px.bar(
-            x=top_drivers.values,
-            y=top_drivers.index,
-            orientation='h',
-            title="Top 10 Drivers by Earnings",
-            labels={'x': 'Earnings (UGX)', 'y': 'Driver'}
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        top_drivers = df.groupby('Driver')['Driver Earnings'].sum().nlargest(10).reset_index()
+        top_drivers.columns = ['Driver', 'Total Earnings (UGX)']
+        top_drivers['Total Earnings (UGX)'] = top_drivers['Total Earnings (UGX)'].map('{:,.0f}'.format)
+        st.subheader("Top 10 Drivers by Earnings")
+        st.dataframe(top_drivers, use_container_width=True)
     except Exception as e:
         st.error(f"Error in top 10 drivers by earnings: {str(e)}")
 
@@ -550,11 +550,21 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
             (df['Trip Status'] == 'Job Completed')
         ][['Passenger', 'Trip Date', 'Trip Pay Amount Cleaned', 'Distance']]
         if not staff_trips.empty:
-            # Calculate trip count per staff member
-            trip_counts = staff_trips.groupby('Passenger').size().reset_index(name='Trip Count')
-            # Merge trip counts back into staff_trips
-            staff_trips = staff_trips.merge(trip_counts, on='Passenger', how='left')
-        return staff_trips
+            # Aggregate data to show each staff member once
+            staff_summary = staff_trips.groupby('Passenger').agg({
+                'Trip Date': ['count', 'max'],  # Count trips and get latest trip date
+                'Trip Pay Amount Cleaned': 'sum',  # Sum of trip pay
+                'Distance': 'sum'  # Sum of distance
+            }).reset_index()
+            # Flatten multi-level column names
+            staff_summary.columns = ['Passenger', 'Trip Count', 'Last Trip Date', 'Total Trip Pay (UGX)', 'Total Distance (km)']
+            # Format numeric columns
+            staff_summary['Total Trip Pay (UGX)'] = staff_summary['Total Trip Pay (UGX)'].map('{:,.0f}'.format)
+            staff_summary['Total Distance (km)'] = staff_summary['Total Distance (km)'].map('{:.1f}'.format)
+            # Convert Last Trip Date to date only
+            staff_summary['Last Trip Date'] = pd.to_datetime(staff_summary['Last Trip Date']).dt.date
+            return staff_summary
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Error in get completed trips by union passengers: {str(e)}")
         return pd.DataFrame()
@@ -563,27 +573,17 @@ def most_frequent_locations(df):
     try:
         if 'From Location' not in df.columns or 'Dropoff Location' not in df.columns:
             return
-        pickup_counts = df['From Location'].value_counts().head(5)
-        dropoff_counts = df['Dropoff Location'].value_counts().head(5)
+        pickup_counts = df['From Location'].value_counts().head(5).reset_index()
+        pickup_counts.columns = ['Pickup Location', 'Trip Count']
+        dropoff_counts = df['Dropoff Location'].value_counts().head(5).reset_index()
+        dropoff_counts.columns = ['Dropoff Location', 'Trip Count']
         col1, col2 = st.columns(2)
         with col1:
-            fig1 = px.bar(
-                x=pickup_counts.values,
-                y=pickup_counts.index,
-                orientation='h',
-                title="Top 5 Pickup Locations",
-                labels={'x': 'Number of Trips', 'y': 'Location'}
-            )
-            st.plotly_chart(fig1, use_container_width=True)
+            st.subheader("Top 5 Pickup Locations")
+            st.dataframe(pickup_counts, use_container_width=True)
         with col2:
-            fig2 = px.bar(
-                x=dropoff_counts.values,
-                y=dropoff_counts.index,
-                orientation='h',
-                title="Top 5 Dropoff Locations",
-                labels={'x': 'Number of Trips', 'y': 'Location'}
-            )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.subheader("Top 5 Dropoff Locations")
+            st.dataframe(dropoff_counts, use_container_width=True)
     except Exception as e:
         st.error(f"Error in most frequent locations: {str(e)}")
 
@@ -591,15 +591,10 @@ def top_pickup_locations_metric(df):
     try:
         if 'From Location' not in df.columns:
             return
-        pickup_counts = df['From Location'].value_counts().head(5)
-        fig = px.bar(
-            x=pickup_counts.values,
-            y=pickup_counts.index,
-            orientation='h',
-            title="Top 5 Pickup Locations by Trip Count",
-            labels={'x': 'Number of Trips', 'y': 'Location'}
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        pickup_counts = df['From Location'].value_counts().head(5).reset_index()
+        pickup_counts.columns = ['Pickup Location', 'Trip Count']
+        st.subheader("Top 5 Pickup Locations by Trip Count")
+        st.dataframe(pickup_counts, use_container_width=True)
     except Exception as e:
         st.error(f"Error in top pickup locations metric: {str(e)}")
 
@@ -623,6 +618,9 @@ def trip_status_trends(df):
         if 'Trip Status' not in df.columns or 'Trip Date' not in df.columns:
             return
         status_trends = df.groupby([df['Trip Date'].dt.date, 'Trip Status']).size().unstack(fill_value=0)
+        # Ensure dates do not extend beyond the latest available date
+        max_date = df['Trip Date'].dt.date.max()
+        status_trends = status_trends[status_trends.index <= max_date]
         fig = go.Figure()
         for status in status_trends.columns:
             fig.add_trace(go.Scatter(
@@ -635,7 +633,8 @@ def trip_status_trends(df):
             title="Trip Status Trends Over Time",
             xaxis_title="Date",
             yaxis_title="Number of Trips",
-            template="plotly_white"
+            template="plotly_white",
+            xaxis=dict(range=[status_trends.index.min(), max_date])
         )
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
@@ -741,7 +740,7 @@ def main():
             df = load_data()
             if not df.empty and 'Trip Date' in df.columns:
                 min_date = df['Trip Date'].min().date()
-                max_date = df['Trip Date'].max().date()
+                max_date = df['Trip Date'].max().date()  # Set max_date to latest data date
         except:
             pass
 
@@ -749,7 +748,7 @@ def main():
             "Date Range",
             value=[min_date, max_date],
             min_value=min_date,
-            max_value=max_date
+            max_value=max_date  # Restrict max date to latest data date
         )
 
         df = load_data()
@@ -923,7 +922,7 @@ def main():
 
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
-                            st.dataframe(staff_trips_df)
+                            st.dataframe(staff_trips_df, use_container_width=True)
                         else:
                             st.info("No matching completed trips found for Union Staff members.")
                 else:
