@@ -403,14 +403,19 @@ def revenue_share(df):
 def total_trips_by_type(df):
     try:
         if 'Trip Type' not in df.columns:
+            st.warning("Missing 'Trip Type' column. Cannot display trips by type.")
             return
         type_counts = df['Trip Type'].value_counts()
-        fig = px.bar(
-            x=type_counts.index,
-            y=type_counts.values,
+        if type_counts.empty:
+            st.info("No trip type data available to display.")
+            return
+        fig = px.pie(
+            values=type_counts.values,
+            names=type_counts.index,
             title="Trips by Type",
-            labels={'x': 'Trip Type', 'y': 'Number of Trips'}
+            hole=0.3  # Optional: adds a donut chart effect
         )
+        fig.update_traces(textinfo='percent+label', pull=[0.05]*len(type_counts))  # Optional: improve readability
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error in total trips by type: {str(e)}")
