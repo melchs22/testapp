@@ -15,7 +15,7 @@ import uuid
 
 # Load environment variables
 load_dotenv()
-OPENCAGE_API_KEY = os.getenv('OPENCAGE_API_KEY')
+OPENCAGE_API_KEY = "5410f9e3cdae4eda92cb3ce71339aff7"
 
 # Configure page
 st.set_page_config(
@@ -37,6 +37,7 @@ st.markdown("""
         padding: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
+ Rudd
     .stMetric label, .stMetric div {
         color: black !important;
     }
@@ -55,23 +56,42 @@ DATA_FILE_PATH = r"./BEER.xlsx"
 TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
 UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
-# Enhanced function to extract UGX amounts from any column
+# Function to extract UGX amounts from any column
 def extract_ugx_amount(value):
     try:
         if pd.isna(value) or value is None:
             return 0.0
-        # Convert to string and clean
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
-        # Extract numeric part using regex
         amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
         if amounts:
             return float(amounts[0])
-        # Try direct conversion if it's a numeric string
         if value_str.replace('.', '').isdigit():
             return float(value_str)
         return 0.0
     except (ValueError, TypeError):
         return 0.0
+
+# Function to geocode locations using OpenCage
+def geocode_location(location):
+    try:
+        if pd.isna(location) or not location:
+            return None, None
+        url = "https://api.opencagedata.com/geocode/v1/json"
+        params = {
+            "q": location,
+            "key": OPENCAGE_API_KEY,
+            "limit": 1
+        }
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data["results"]:
+            geometry = data["results"][0]["geometry"]
+            return geometry["lat"], geometry["lng"]
+        return None, None
+    except Exception as e:
+        st.warning(f"Error geocoding {location}: {str(e)}")
+        return None, None
 
 # Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
@@ -166,6 +186,17 @@ def load_data():
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
 
+        # Geocode pickup locations for completed trips
+        if 'Pickup Location' in df.columns and 'Trip Status' in df.columns:
+            completed_trips = df[df['Trip Status'] == 'Job Completed']
+            if not completed_trips.empty:
+                df['Latitude'] = pd.Series([None] * len(df), index=df.index)
+                df['Longitude'] = pd.Series([None] * len(df), index=df.index)
+                for idx in completed_trips.index:
+                    lat, lng = geocode_location(completed_trips.at[idx, 'Pickup Location'])
+                    df.at[idx, 'Latitude'] = lat
+                    df.at[idx, 'Longitude'] = lng
+
         return df
 
     except Exception as e:
@@ -186,7 +217,8 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
-        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns else 0.0
+        # Sum only negative Wallet Balance values for commission owed
+        commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
@@ -499,6 +531,9 @@ def passenger_value_segmentation(df):
         if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
+        if len(passenger_revenue.unique()) < 3:
+            st.warning("Not enough unique passenger revenue values for segmentation.")
+            return
         bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
         segment_counts = bins.value_counts()
         fig = px.pie(
@@ -619,6 +654,39 @@ def customer_payment_methods(df):
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
+
+def heatmap_completed_trips(df):
+    try:
+        if 'Latitude' not in df.columns or 'Longitude' not in df.columns or 'Trip Status' not in df.columns:
+            st.warning("Required columns for heatmap (Latitude, Longitude, Trip Status) are missing.")
+            return
+        completed_trips = df[df['Trip Status'] == 'Job Completed'][['Latitude', 'Longitude']].dropna()
+        if completed_trips.empty:
+            st.warning("No completed trips with valid coordinates for heatmap.")
+            return
+        layer = pdk.Layer(
+            "HeatmapLayer",
+            data=completed_trips,
+            get_position=["Longitude", "Latitude"],
+            radius_pixels=100,
+            opacity=0.5,
+            threshold=0.05,
+            aggregation="SUM"
+        )
+        view_state = pdk.ViewState(
+            latitude=completed_trips['Latitude'].mean(),
+            longitude=completed_trips['Longitude'].mean(),
+            zoom=10,
+            pitch=0
+        )
+        deck = pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            map_style="mapbox://styles/mapbox/light-v10"
+        )
+        st.pydeck_chart(deck)
+    except Exception as e:
+        st.error(f"Error in heatmap creation: {str(e)}")
 
 def get_download_data(df):
     try:
@@ -888,6 +956,9 @@ def main():
 
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
+                            # Count completed trips per staff member
+                            trip_counts = staff_trips_df.groupby('Passenger').size().reset_index(name='Completed Trips')
+                            staff_trips_df = staff_trips_df.merge(trip_counts, on='Passenger', how='left')
                             st.dataframe(staff_trips_df)
                         else:
                             st.info("No matching completed trips found for Union Staff members.")
@@ -899,6 +970,8 @@ def main():
 
         with tab4:
             st.header("Geographic Analysis")
+            st.subheader("Heatmap of Completed Trips")
+            heatmap_completed_trips(df)
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
