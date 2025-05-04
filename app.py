@@ -12,10 +12,41 @@ import io
 from fpdf import FPDF
 import uuid
 import threading
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+import git
 
 # Load environment variables
 load_dotenv()
-OPENCAGE_API_KEY = "5410f9e3cdae4eda92cb3ce71339aff7"
+OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
+USERNAME = os.getenv("USERNAME")
+PASSWORD = os.getenv("PASSWORD")
+
+# File paths
+PASSENGERS_FILE_PATH = r"./data/PASSENGERS.xlsx"
+DRIVERS_FILE_PATH = r"./data/DRIVERS.xlsx"
+DATA_FILE_PATH = r"./data/BEER.xlsx"
+TRANSACTIONS_FILE_PATH = r"./data/TRANSACTIONS.xlsx"
+UNION_STAFF_FILE_PATH = r"./data/UNION STAFF.xlsx"
+GEOCODE_CACHE_PATH = r"./data/geocode_cache.csv"
+DOWNLOAD_DIR = r"./data/downloads"
+REPO_PATH = r"C:\testapp"
+REPO_REMOTE = "origin"
+REPO_BRANCH = "main"
+
+# Ensure directories exist
+os.makedirs(os.path.dirname(DATA_FILE_PATH), exist_ok=True)
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Selenium setup
+options = webdriver.ChromeOptions()
+prefs = {"download.default_directory": DOWNLOAD_DIR}
+options.add_experimental_option("prefs", prefs)
+WAIT_TIME = 30
 
 # Configure page
 st.set_page_config(
@@ -49,12 +80,125 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
-DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
-DATA_FILE_PATH = r"./BEER.xlsx"
-TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
-UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
-GEOCODE_CACHE_PATH = r"./geocode_cache.csv"
+# Function to merge new data with existing data
+def merge_data(existing_file, new_df, unique_key):
+    try:
+        if os.path.exists(existing_file):
+            existing_df = pd.read_excel(existing_file)
+            # Ensure unique_key columns exist
+            missing_keys = [key for key in unique_key if key not in new_df.columns or key not in existing_df.columns]
+            if missing_keys:
+                st.warning(f"Missing unique key columns {missing_keys} in {existing_file}. Appending all new data.")
+                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            else:
+                # Convert unique_key to tuple for deduplication
+                existing_df['__key__'] = existing_df[unique_key].apply(tuple, axis=1)
+                new_df['__key__'] = new_df[unique_key].apply(tuple, axis=1)
+                # Keep only new records not in existing data
+                new_records = new_df[~new_df['__key__'].isin(existing_df['__key__'])]
+                combined_df = pd.concat([existing_df, new_records], ignore_index=True)
+                combined_df = combined_df.drop(columns=['__key__'])
+        else:
+            combined_df = new_df
+        return combined_df
+    except Exception as e:
+        st.error(f"Error merging data for {existing_file}: {str(e)}")
+        return new_df
+
+# Function to download, merge, and convert CSV to Excel
+def download_rename_and_convert_csv(driver, url, page_name, file_name, unique_key):
+    print(f"\nNavigating to {page_name} page...")
+    driver.get(url)
+    time.sleep(WAIT_TIME)
+    print(f"Looking for CSV download button on {page_name} page...")
+    try:
+        csv_elements = WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//*[contains(text(), 'CSV') or contains(@value, 'CSV')]"))
+        )
+        for element in csv_elements:
+            try:
+                print(f"Attempting to click element: {element.text or element.get_attribute('value')}")
+                element.click()
+                print(f"CSV download initiated for {page_name}")
+                time.sleep(WAIT_TIME)
+                downloaded_file = max([os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)], key=os.path.getctime)
+                df = pd.read_csv(downloaded_file)
+                new_filepath = os.path.join(os.path.dirname(DATA_FILE_PATH), f"{file_name}.xlsx")
+                # Merge with existing data
+                merged_df = merge_data(new_filepath, df, unique_key)
+                merged_df.to_excel(new_filepath, index=False)
+                os.remove(downloaded_file)
+                print(f"File merged and saved to: {new_filepath}")
+                return new_filepath
+            except Exception as click_error:
+                print(f"Failed to click element or process file: {str(click_error)}")
+        else:
+            print(f"No clickable CSV element found on {page_name} page")
+            return None
+    except TimeoutException:
+        print(f"CSV button not found within the timeout period on {page_name} page.")
+        return None
+
+# Function to push to Git
+def push_to_git(repo_path, files):
+    try:
+        repo = git.Repo(repo_path)
+        repo.remotes[REPO_REMOTE].pull()
+        repo.index.add(files)
+        commit_message = f"Update XLSX files - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        repo.index.commit(commit_message)
+        repo.remotes[REPO_REMOTE].push()
+        print(f"Successfully pushed {len(files)} files to the repository.")
+    except Exception as e:
+        st.warning(f"Error pushing to Git: {str(e)}")
+
+# Function to download all data
+def download_all_data():
+    driver = None
+    try:
+        driver = webdriver.Chrome(options=options)
+        print("Opening login page...")
+        driver.get("https://backend.bodabodaunion.ug/admin")
+        WebDriverWait(driver, WAIT_TIME).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        print("Filling in username...")
+        username_field = WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][username]']"))
+        )
+        username_field.send_keys(USERNAME)
+        print("Filling in password...")
+        password_field = WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][password]']"))
+        )
+        password_field.send_keys(PASSWORD)
+        print("Clicking login button...")
+        login_button = WebDriverWait(driver, WAIT_TIME).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
+        )
+        login_button.click()
+        WebDriverWait(driver, WAIT_TIME).until(EC.url_changes("https://backend.bodabodaunion.ug/admin"))
+        pages = [
+            ("https://backend.bodabodaunion.ug/admin/drivers", "Drivers", "DRIVERS", ["ID"]),
+            ("https://backend.bodabodaunion.ug/admin/users/storeindex", "Active Passengers", "PASSENGERS", ["ID"]),
+            ("https://backend.bodabodaunion.ug/admin/trips", "Trips", "BEER", ["ID"]),
+            ("https://backend.bodabodaunion.ug/admin/transactions", "Transaction Manager", "TRANSACTIONS", ["ID"])
+        ]
+        xlsx_paths = []
+        for url, page_name, file_name, unique_key in pages:
+            file_path = download_rename_and_convert_csv(driver, url, page_name, file_name, unique_key)
+            if file_path:
+                xlsx_paths.append(file_path)
+                print(f"✅ Processed {page_name}")
+            else:
+                print(f"❌ Failed to process {page_name}")
+        if xlsx_paths:
+            push_to_git(REPO_PATH, xlsx_paths)
+        return xlsx_paths
+    except Exception as e:
+        st.warning(f"Error downloading data: {str(e)}")
+        return []
+    finally:
+        if driver:
+            driver.quit()
 
 # Function to load or initialize geocode cache
 def load_geocode_cache():
@@ -94,11 +238,9 @@ def geocode_location(location, cache_df):
     try:
         if pd.isna(location) or not location:
             return None, None, cache_df
-        # Check cache
         cache_hit = cache_df[cache_df["location"] == location]
         if not cache_hit.empty:
             return cache_hit["latitude"].iloc[0], cache_hit["longitude"].iloc[0], cache_df
-        # Query OpenCage API
         url = "https://api.opencagedata.com/geocode/v1/json"
         params = {
             "q": location,
@@ -112,7 +254,6 @@ def geocode_location(location, cache_df):
             geometry = data["results"][0]["geometry"]
             lat, lng = geometry["lat"], geometry["lng"]
             if lng is not None and lat is not None:
-                # Append to cache
                 new_entry = pd.DataFrame({
                     "location": [location],
                     "latitude": [lat],
@@ -755,7 +896,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
             start_date, end_date = date_range
             try:
                 start_date_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
-                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
+                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(end_date)
             except (AttributeError, TypeError):
                 pass
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
@@ -794,6 +935,11 @@ def main():
     st.title("Union App Metrics Dashboard")
     try:
         st.cache_data.clear()
+        # Download and update data
+        with st.spinner("Downloading and updating data..."):
+            xlsx_paths = download_all_data()
+            if not xlsx_paths:
+                st.warning("No new data downloaded. Using existing files.")
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
         df = load_data()
@@ -817,11 +963,9 @@ def main():
         if 'Trip Date' not in df.columns:
             st.error("No 'Trip Date' column found in the data")
             return
-        # Initialize session state for heatmap
         if "heatmap_data" not in st.session_state:
             st.session_state["heatmap_data"] = None
             st.session_state["heatmap_ready"] = False
-            # Start background thread for heatmap data preparation
             threading.Thread(target=prepare_heatmap_data, args=(df,), daemon=True).start()
         app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
         riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
@@ -969,13 +1113,10 @@ def main():
         with tab4:
             st.header("Geographic Analysis")
             st.subheader("Heatmap of Completed Trips")
-            # Initialize session state for button
             if 'show_heatmap' not in st.session_state:
                 st.session_state.show_heatmap = False
-            # Button to trigger heatmap display
             if st.button("Click to View Heatmap"):
                 st.session_state.show_heatmap = True
-            # Show heatmap only if button is clicked
             if st.session_state.show_heatmap:
                 with st.spinner("Preparing heatmap, please wait..."):
                     heatmap_completed_trips()
@@ -991,6 +1132,4 @@ def main():
         st.error(f"Error: {e}")
 
 if __name__ == "__main__":
-    if not os.path.exists("data"):
-        os.makedirs("data")
     main()
