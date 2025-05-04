@@ -10,30 +10,12 @@ import re
 from dotenv import load_dotenv
 import io
 from fpdf import FPDF
-import threading
+import base64
+import uuid
 
 # Load environment variables
 load_dotenv()
-OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
-
-# File paths
-PASSENGERS_FILE_PATH = r"./data/PASSENGERS.xlsx"
-DRIVERS_FILE_PATH = r"./data/DRIVERS.xlsx"
-DATA_FILE_PATH = r"./data/BEER.xlsx"
-TRANSACTIONS_FILE_PATH = r"./data/TRANSACTIONS.xlsx"
-UNION_STAFF_FILE_PATH = r"./data/UNION STAFF.xlsx"
-GEOCODE_CACHE_PATH = r"./data/geocode_cache.csv"
-
-# Ensure data directory exists
-os.makedirs(os.path.dirname(DATA_FILE_PATH), exist_ok=True)
-
-# Expected columns for placeholder files
-EXPECTED_COLUMNS = {
-    "BEER": ["ID", "Trip Date", "Trip Status", "Driver", "Passenger", "Trip Pay Amount", "Company Commission Cleaned", "Trip Distance (KM/Mi)", "Pay Mode", "From Location", "Dropoff Location", "Trip Hour", "Day of Week", "Month", "Trip Type"],
-    "DRIVERS": ["ID", "Created", "Wallet Balance", "Commission Owed"],
-    "PASSENGERS": ["ID", "Created", "Wallet Balance"],
-    "TRANSACTIONS": ["ID", "Company Amt (UGX)", "Pay Mode"]
-}
+OPENCAGE_API_KEY = os.getenv('OPENCAGE_API_KEY')
 
 # Configure page
 st.set_page_config(
@@ -67,123 +49,38 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Function to create placeholder Excel file
-def create_placeholder_file(filepath, columns):
-    try:
-        df = pd.DataFrame(columns=columns)
-        df.to_excel(filepath, index=False)
-        print(f"Created placeholder file: {filepath}")
-    except Exception as e:
-        st.warning(f"Error creating placeholder file {filepath}: {str(e)}")
+PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
+DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
+DATA_FILE_PATH = r"./BEER.xlsx"
+TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
+UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
-# Function to load or initialize geocode cache
-def load_geocode_cache():
-    try:
-        if os.path.exists(GEOCODE_CACHE_PATH):
-            return pd.read_csv(GEOCODE_CACHE_PATH)
-        else:
-            return pd.DataFrame(columns=["location", "latitude", "longitude"])
-    except Exception as e:
-        st.warning(f"Error loading geocode cache: {str(e)}")
-        return pd.DataFrame(columns=["location", "latitude", "longitude"])
-
-# Function to save geocode cache
-def save_geocode_cache(cache_df):
-    try:
-        cache_df.to_csv(GEOCODE_CACHE_PATH, index=False)
-    except Exception as e:
-        st.warning(f"Error saving geocode cache: {str(e)}")
-
-# Function to extract UGX amounts from any column
+# Enhanced function to extract UGX amounts from any column
 def extract_ugx_amount(value):
     try:
         if pd.isna(value) or value is None:
             return 0.0
+        # Convert to string and clean
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
+        # Extract numeric part using regex
         amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
         if amounts:
             return float(amounts[0])
+        # Try direct conversion if it's a numeric string
         if value_str.replace('.', '').isdigit():
             return float(value_str)
         return 0.0
     except (ValueError, TypeError):
         return 0.0
 
-# Function to geocode locations using OpenCage with caching
-def geocode_location(location, cache_df):
-    try:
-        if pd.isna(location) or not location:
-            return None, None, cache_df
-        cache_hit = cache_df[cache_df["location"] == location]
-        if not cache_hit.empty:
-            return cache_hit["latitude"].iloc[0], cache_hit["longitude"].iloc[0], cache_df
-        url = "https://api.opencagedata.com/geocode/v1/json"
-        params = {
-            "q": location,
-            "key": OPENCAGE_API_KEY,
-            "limit": 1
-        }
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if data["results"]:
-            geometry = data["results"][0]["geometry"]
-            lat, lng = geometry["lat"], geometry["lng"]
-            if lng is not None and lat is not None:
-                new_entry = pd.DataFrame({
-                    "location": [location],
-                    "latitude": [lat],
-                    "longitude": [lng]
-                })
-                cache_df = pd.concat([cache_df, new_entry], ignore_index=True)
-                return lat, lng, cache_df
-        return None, None, cache_df
-    except Exception as e:
-        st.warning(f"Error geocoding {location}: {str(e)}")
-        return None, None, cache_df
-
-# Function to prepare heatmap data in the background
-def prepare_heatmap_data(df, session_state_key="heatmap_data"):
-    try:
-        if 'From Location' not in df.columns or 'Trip Status' not in df.columns:
-            st.session_state[session_state_key] = None
-            st.session_state["heatmap_ready"] = True
-            return
-        completed_trips = df[df['Trip Status'] == 'Job Completed']
-        if completed_trips.empty:
-            st.session_state[session_state_key] = None
-            st.session_state["heatmap_ready"] = True
-            return
-        cache_df = load_geocode_cache()
-        completed_trips = completed_trips.copy()
-        completed_trips['Latitude'] = pd.Series([None] * len(completed_trips), index=completed_trips.index)
-        completed_trips['Longitude'] = pd.Series([None] * len(completed_trips), index=completed_trips.index)
-        for idx in completed_trips.index:
-            location = completed_trips.at[idx, 'From Location']
-            lat, lng, cache_df = geocode_location(location, cache_df)
-            if lat is not None and lng is not None:
-                completed_trips.at[idx, 'Latitude'] = lat
-                completed_trips.at[idx, 'Longitude'] = lng
-        save_geocode_cache(cache_df)
-        st.session_state[session_state_key] = completed_trips[['Latitude', 'Longitude']].dropna()
-        st.session_state["heatmap_ready"] = True
-    except Exception as e:
-        st.session_state[session_state_key] = None
-        st.session_state["heatmap_ready"] = True
-        st.error(f"Error preparing heatmap data: {str(e)}")
-
 # Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
     try:
-        if not os.path.exists(PASSENGERS_FILE_PATH):
-            create_placeholder_file(PASSENGERS_FILE_PATH, EXPECTED_COLUMNS["PASSENGERS"])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
-        if 'Created' not in df.columns:
-            st.warning("Missing 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=EXPECTED_COLUMNS["PASSENGERS"])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
+
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -191,22 +88,18 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame(columns=EXPECTED_COLUMNS["PASSENGERS"])
+        return pd.DataFrame()
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
-        if not os.path.exists(DRIVERS_FILE_PATH):
-            create_placeholder_file(DRIVERS_FILE_PATH, EXPECTED_COLUMNS["DRIVERS"])
         df = pd.read_excel(DRIVERS_FILE_PATH)
-        if 'Created' not in df.columns:
-            st.warning("Missing 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=EXPECTED_COLUMNS["DRIVERS"])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
         if 'Commission Owed' in df.columns:
             df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
+
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -214,78 +107,70 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame(columns=EXPECTED_COLUMNS["DRIVERS"])
+        return pd.DataFrame()
 
 # Function to load and merge transactions data
 def load_transactions_data():
     try:
-        if not os.path.exists(TRANSACTIONS_FILE_PATH):
-            create_placeholder_file(TRANSACTIONS_FILE_PATH, EXPECTED_COLUMNS["TRANSACTIONS"])
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
+        
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Company Amt (UGX)' column found in transactions data")
             transactions_df['Company Commission Cleaned'] = 0.0
+            
         if 'Pay Mode' in transactions_df.columns:
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
             transactions_df['Pay Mode'] = 'Unknown'
+            
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
-        return pd.DataFrame(columns=["Company Commission Cleaned", "Pay Mode"])
+        return pd.DataFrame()
 
 def load_data():
     try:
-        if not os.path.exists(DATA_FILE_PATH):
-            create_placeholder_file(DATA_FILE_PATH, EXPECTED_COLUMNS["BEER"])
         df = pd.read_excel(DATA_FILE_PATH)
-        if 'Trip Date' not in df.columns:
-            st.warning("Missing 'Trip Date' column in BEER.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
-        # Handle datetime parsing
-        df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
-        invalid_dates = df[df['Trip Date'].isna()]
-        if not invalid_dates.empty:
-            st.warning(f"Found {len(invalid_dates)} rows with invalid 'Trip Date' values. These rows will be excluded.")
-            print(f"Invalid Trip Date values: {invalid_dates['Trip Date'].tolist()}")
-            df = df[df['Trip Date'].notna()]
-        if df.empty:
-            st.warning("No valid data after datetime filtering. Returning empty DataFrame.")
-            return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
+        
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
                 df['Company Commission Cleaned'] += transactions_df['Company Commission Cleaned']
             elif 'Company Commission Cleaned' not in df.columns:
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
+                
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
+
+        df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
+
         if 'Trip Pay Amount' in df.columns:
             df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
-        if 'Trip Distance (KM/Mi)' in df.columns:
-            df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
-        else:
-            st.warning("No 'Trip Distance (KM/Mi)' column found - creating placeholder")
-            df['Distance'] = 0.0
+
+        df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
+
         if 'Company Commission Cleaned' not in df.columns:
             st.warning("No company commission data found - creating placeholder")
             df['Company Commission Cleaned'] = 0.0
+
         if 'Pay Mode' not in df.columns:
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
+
         return df
+
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
-        return pd.DataFrame(columns=EXPECTED_COLUMNS["BEER"])
+        return pd.DataFrame()
 
 # Define metrics functions
 def passenger_metrics(df_passengers):
@@ -301,7 +186,7 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
-        commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
+        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns else 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
@@ -558,15 +443,14 @@ def unique_driver_count(df):
 
 def top_drivers_by_revenue(df):
     try:
-        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Trip Status' not in df.columns:
+        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
-        completed_trips = df[df['Trip Status'] == 'Job Completed']
-        top_drivers = completed_trips.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
+        top_drivers = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
         fig = px.bar(
             x=top_drivers.values,
             y=top_drivers.index,
             orientation='h',
-            title="Top 5 Drivers by Revenue (Completed Trips)",
+            title="Top 5 Drivers by Revenue",
             labels={'x': 'Revenue (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -615,9 +499,6 @@ def passenger_value_segmentation(df):
         if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
-        if len(passenger_revenue.unique()) < 3:
-            st.warning("Not enough unique passenger revenue values for segmentation.")
-            return
         bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
         segment_counts = bins.value_counts()
         fig = px.pie(
@@ -631,16 +512,15 @@ def passenger_value_segmentation(df):
 
 def top_10_drivers_by_earnings(df):
     try:
-        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns or 'Trip Status' not in df.columns:
+        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
             return
-        completed_trips = df[df['Trip Status'] == 'Job Completed']
-        completed_trips['Driver Earnings'] = completed_trips['Trip Pay Amount Cleaned'] - completed_trips['Company Commission Cleaned']
-        top_drivers = completed_trips.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
+        df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
+        top_drivers = df.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
         fig = px.bar(
             x=top_drivers.values,
             y=top_drivers.index,
             orientation='h',
-            title="Top 10 Drivers by Earnings (Completed Trips)",
+            title="Top 10 Drivers by Earnings",
             labels={'x': 'Earnings (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -662,9 +542,9 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
 
 def most_frequent_locations(df):
     try:
-        if 'From Location' not in df.columns or 'Dropoff Location' not in df.columns:
+        if 'Pickup Location' not in df.columns or 'Dropoff Location' not in df.columns:
             return
-        pickup_counts = df['From Location'].value_counts().head(5)
+        pickup_counts = df['Pickup Location'].value_counts().head(5)
         dropoff_counts = df['Dropoff Location'].value_counts().head(5)
         col1, col2 = st.columns(2)
         with col1:
@@ -740,39 +620,6 @@ def customer_payment_methods(df):
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
 
-def heatmap_completed_trips():
-    try:
-        if not st.session_state.get("heatmap_ready", False):
-            st.spinner("Preparing heatmap, please wait...")
-            return
-        heatmap_data = st.session_state.get("heatmap_data", None)
-        if heatmap_data is None or heatmap_data.empty:
-            st.warning("No completed trips with valid coordinates for heatmap.")
-            return
-        layer = pdk.Layer(
-            "HeatmapLayer",
-            data=heatmap_data,
-            get_position=["Longitude", "Latitude"],
-            radius_pixels=100,
-            opacity=0.5,
-            threshold=0.05,
-            aggregation="SUM"
-        )
-        view_state = pdk.ViewState(
-            latitude=heatmap_data['Latitude'].mean(),
-            longitude=heatmap_data['Longitude'].mean(),
-            zoom=10,
-            pitch=0
-        )
-        deck = pdk.Deck(
-            layers=[layer],
-            initial_view_state=view_state,
-            map_style="mapbox://styles/mapbox/light-v10"
-        )
-        st.pydeck_chart(deck)
-    except Exception as e:
-        st.error(f"Error in heatmap creation: {str(e)}")
-
 def get_download_data(df):
     try:
         download_df = df[['Trip Date', 'Trip Status', 'Driver', 'Passenger', 'Trip Pay Amount Cleaned', 'Company Commission Cleaned', 'Distance', 'Pay Mode']].copy()
@@ -789,24 +636,31 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                 self.set_font('Arial', 'B', 12)
                 self.cell(0, 10, 'Union App Metrics Report', 0, 1, 'C')
                 self.ln(5)
+
             def footer(self):
                 self.set_y(-15)
                 self.set_font('Arial', 'I', 8)
                 self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
         pdf = PDF()
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
+
+        # Convert date_range to strings, handling invalid or missing dates
         start_date_str = 'N/A'
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             try:
                 start_date_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
-                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(end_date)
+                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
             except (AttributeError, TypeError):
                 pass
+
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
+
+        # Ensure all numeric values are floats or integers
         total_trips = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
         total_revenue = float(df['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
@@ -818,6 +672,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         passenger_wallet_balance = float(passenger_wallet_balance) if passenger_wallet_balance is not None else 0.0
         driver_wallet_balance = float(driver_wallet_balance) if driver_wallet_balance is not None else 0.0
         commission_owed = float(commission_owed) if commission_owed is not None else 0.0
+
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, "Key Metrics", 0, 1)
         pdf.set_font('Arial', '', 12)
@@ -832,6 +687,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
         pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
+
         return pdf
     except Exception as e:
         st.error(f"Error in create metrics pdf: {str(e)}")
@@ -839,40 +695,52 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
 
 def main():
     st.title("Union App Metrics Dashboard")
+
     try:
         st.cache_data.clear()
-        with st.spinner("Loading data..."):
-            df = load_data()
-            df_passengers = load_passengers_data()
-            df_drivers = load_drivers_data()
+
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
-        if not df.empty and 'Trip Date' in df.columns:
-            min_date = df['Trip Date'].min().date()
-            max_date = df['Trip Date'].max().date()
+
+        try:
+            df = load_data()
+            if not df.empty and 'Trip Date' in df.columns:
+                min_date = df['Trip Date'].min().date()
+                max_date = df['Trip Date'].max().date()
+        except:
+            pass
+
         date_range = st.sidebar.date_input(
             "Date Range",
             value=[min_date, max_date],
             min_value=min_date,
             max_value=max_date
         )
+
+        df = load_data()
         if len(date_range) == 2:
             df = df[(df['Trip Date'].dt.date >= date_range[0]) &
                     (df['Trip Date'].dt.date <= date_range[1])]
-            df_passengers = load_passengers_data(date_range)
-            df_drivers = load_drivers_data(date_range)
+
+        df_passengers = load_passengers_data(date_range)
+        df_drivers = load_drivers_data(date_range)
+
         if df.empty:
-            st.warning("No trip data loaded. Dashboard will display limited functionality.")
-        if "heatmap_data" not in st.session_state:
-            st.session_state["heatmap_data"] = None
-            st.session_state["heatmap_ready"] = False
-            threading.Thread(target=prepare_heatmap_data, args=(df,), daemon=True).start()
+            st.error("No data loaded - please check the backend data file")
+            return
+
+        if 'Trip Date' not in df.columns:
+            st.error("No 'Trip Date' column found in the data")
+            return
+
         app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
         riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
+
         unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
         retention_rate, passenger_ratio = calculate_driver_retention_rate(
             riders_onboarded, app_downloads, unique_drivers
         )
+
         st.sidebar.markdown("---")
         st.sidebar.subheader("Export Data")
         output = io.BytesIO()
@@ -895,14 +763,17 @@ def main():
             file_name=f"union_app_metrics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
             mime="application/pdf"
         )
+
         tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Financial", "User Analysis", "Geographic"])
+
         with tab1:
             st.header("Trips Overview")
+
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric("Total Requests", len(df))
             with col2:
-                completed_trips = len(df[df['Trip Status'] == 'Job Completed']) if 'Trip Status' in df.columns else 0
+                completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
                 st.metric("Completed Trips", completed_trips)
             with col3:
                 st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
@@ -918,11 +789,13 @@ def main():
                     st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
                 else:
                     st.metric("Passenger Search Timeout", "N/A")
+
             status_breakdown_fig = completed_vs_cancelled_daily(df)
             if status_breakdown_fig:
                 st.plotly_chart(status_breakdown_fig, use_container_width=True)
             else:
                 st.warning("Could not generate trip status breakdown chart - missing required data")
+
             col6, col7, col8 = st.columns(3)
             with col6:
                 trips_per_driver(df)
@@ -930,21 +803,25 @@ def main():
                 st.metric("Passenger App Downloads", app_downloads)
             with col8:
                 st.metric("Riders Onboarded", riders_onboarded)
+
             total_trips_by_status(df)
             total_distance_covered(df)
             revenue_by_day(df)
             avg_revenue_per_trip(df)
             total_commission(df)
+
         with tab2:
             st.header("Financial Performance")
+
             col1, col2, col3 = st.columns(3)
             with col1:
-                total_revenue = df['Trip Pay Amount Cleaned'].sum() if 'Trip Pay Amount Cleaned' in df.columns else 0
+                total_revenue = df['Trip Pay Amount Cleaned'].sum()
                 st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX")
             with col2:
                 total_commission(df)
             with col3:
                 gross_profit(df)
+
             col4, col5, col6 = st.columns(3)
             with col4:
                 st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX")
@@ -952,6 +829,7 @@ def main():
                 st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX")
             with col6:
                 st.metric("Commission Owed", f"{commission_owed:,.0f} UGX")
+
             col7, col8, col9 = st.columns(3)
             with col7:
                 avg_commission_per_trip(df)
@@ -959,17 +837,21 @@ def main():
                 revenue_per_driver(df)
             with col9:
                 driver_earnings_per_trip(df)
+
             col10, col11 = st.columns(2)
             with col10:
                 fare_per_km(df)
             with col11:
                 revenue_share(df)
+
             total_trips_by_type(df)
             payment_method_revenue(df)
             distance_vs_revenue_scatter(df)
             weekday_vs_weekend_analysis(df)
+
         with tab3:
             st.header("User Performance")
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 unique_driver_count(df)
@@ -977,6 +859,7 @@ def main():
                 st.metric("Passenger App Downloads", app_downloads)
             with col3:
                 st.metric("Riders Onboarded", riders_onboarded)
+
             col4, col5 = st.columns(2)
             with col4:
                 st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
@@ -984,13 +867,16 @@ def main():
             with col5:
                 st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
                           help="Number of passengers per active driver")
+
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
             passenger_insights(df)
             passenger_value_segmentation(df)
             top_10_drivers_by_earnings(df)
+
             st.markdown("---")
             st.subheader("Union Staff Trip Completion")
+
             try:
                 if os.path.exists(UNION_STAFF_FILE_PATH):
                     union_staff_df = pd.read_excel(UNION_STAFF_FILE_PATH)
@@ -999,35 +885,31 @@ def main():
                     else:
                         union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
                         st.metric("Total Union Staff Members", len(union_staff_names))
+
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
-                            trip_counts = staff_trips_df.groupby('Passenger').size().reset_index(name='Completed Trips')
-                            staff_trips_df = staff_trips_df.merge(trip_counts, on='Passenger', how='left')
                             st.dataframe(staff_trips_df)
                         else:
                             st.info("No matching completed trips found for Union Staff members.")
                 else:
                     st.info(f"Union Staff file not found at: {UNION_STAFF_FILE_PATH}")
+
             except Exception as e:
                 st.error(f"Error processing Union Staff file: {e}")
+
         with tab4:
             st.header("Geographic Analysis")
-            st.subheader("Heatmap of Completed Trips")
-            if 'show_heatmap' not in st.session_state:
-                st.session_state.show_heatmap = False
-            if st.button("Click to View Heatmap"):
-                st.session_state.show_heatmap = True
-            if st.session_state.show_heatmap:
-                with st.spinner("Preparing heatmap, please wait..."):
-                    heatmap_completed_trips()
-            else:
-                st.info("Click the button above to view the heatmap of completed trips.")
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
             customer_payment_methods(df)
+
+    except FileNotFoundError:
+        st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
     except Exception as e:
         st.error(f"Error: {e}")
 
 if __name__ == "__main__":
+    if not os.path.exists("data"):
+        os.makedirs("data")
     main()
