@@ -10,16 +10,11 @@ import re
 from dotenv import load_dotenv
 import io
 from fpdf import FPDF
-import uuid
 import threading
-import git
 
 # Load environment variables
 load_dotenv()
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
-BASE_URL = "https://backend.bodabodaunion.ug"
 
 # File paths
 PASSENGERS_FILE_PATH = r"./data/PASSENGERS.xlsx"
@@ -28,14 +23,9 @@ DATA_FILE_PATH = r"./data/BEER.xlsx"
 TRANSACTIONS_FILE_PATH = r"./data/TRANSACTIONS.xlsx"
 UNION_STAFF_FILE_PATH = r"./data/UNION STAFF.xlsx"
 GEOCODE_CACHE_PATH = r"./data/geocode_cache.csv"
-DOWNLOAD_DIR = r"./data/downloads"
-REPO_PATH = r"C:\testapp"
-REPO_REMOTE = "origin"
-REPO_BRANCH = "main"
 
-# Ensure directories exist
+# Ensure data directory exists
 os.makedirs(os.path.dirname(DATA_FILE_PATH), exist_ok=True)
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # Expected columns for placeholder files
 EXPECTED_COLUMNS = {
@@ -85,108 +75,6 @@ def create_placeholder_file(filepath, columns):
         print(f"Created placeholder file: {filepath}")
     except Exception as e:
         st.warning(f"Error creating placeholder file {filepath}: {str(e)}")
-
-# Function to merge new data with existing data
-def merge_data(existing_file, new_df, unique_key):
-    try:
-        if os.path.exists(existing_file):
-            existing_df = pd.read_excel(existing_file)
-            missing_keys = [key for key in unique_key if key not in new_df.columns or key not in existing_df.columns]
-            if missing_keys:
-                st.warning(f"Missing unique key columns {missing_keys} in {existing_file}. Appending all new data.")
-                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            else:
-                existing_df['__key__'] = existing_df[unique_key].apply(tuple, axis=1)
-                new_df['__key__'] = new_df[unique_key].apply(tuple, axis=1)
-                new_records = new_df[~new_df['__key__'].isin(existing_df['__key__'])]
-                combined_df = pd.concat([existing_df, new_records], ignore_index=True)
-                combined_df = combined_df.drop(columns=['__key__'])
-        else:
-            combined_df = new_df
-        return combined_df
-    except Exception as e:
-        st.error(f"Error merging data for {existing_file}: {str(e)}")
-        return new_df
-
-# Function to download CSV and merge with existing Excel
-def download_and_merge_csv(session, url, page_name, file_name, unique_key):
-    try:
-        print(f"\nDownloading {page_name} data from {url}...")
-        response = session.get(url)
-        print(f"Status Code: {response.status_code}")
-        print(f"Headers: {response.headers}")
-        content_type = response.headers.get('content-type', '')
-        print(f"Content-Type: {content_type}")
-        if response.status_code != 200:
-            print(f"Failed to access {page_name}. Response: {response.text[:200]}")
-            return None
-        if 'text/csv' not in content_type and 'application/octet-stream' not in content_type:
-            print(f"No CSV data found for {page_name}. Response content: {response.text[:200]}")
-            return None
-        csv_path = os.path.join(DOWNLOAD_DIR, f"{file_name}.csv")
-        with open(csv_path, 'wb') as f:
-            f.write(response.content)
-        df = pd.read_csv(csv_path)
-        new_filepath = os.path.join(os.path.dirname(DATA_FILE_PATH), f"{file_name}.xlsx")
-        merged_df = merge_data(new_filepath, df, unique_key)
-        merged_df.to_excel(new_filepath, index=False)
-        os.remove(csv_path)
-        print(f"File merged and saved to: {new_filepath}")
-        return new_filepath
-    except Exception as e:
-        print(f"Error downloading {page_name}: {str(e)}")
-        return None
-
-# Function to download all data
-def download_all_data():
-    try:
-        session = requests.Session()
-        login_url = f"{BASE_URL}/admin"
-        login_data = {
-            "data[User][username]": USERNAME,
-            "data[User][password]": PASSWORD
-        }
-        print("Logging in...")
-        response = session.post(login_url, data=login_data, allow_redirects=True)
-        print(f"Login Status Code: {response.status_code}")
-        print(f"Login Response URL: {response.url}")
-        print(f"Login Headers: {response.headers}")
-        if response.status_code != 200 or "admin" not in response.url:
-            st.warning("Login failed. Check credentials in .env file or website authentication requirements.")
-            return []
-        pages = [
-            (f"{BASE_URL}/admin/drivers", "Drivers", "DRIVERS", ["ID"]),
-            (f"{BASE_URL}/admin/users/storeindex", "Active Passengers", "PASSENGERS", ["ID"]),
-            (f"{BASE_URL}/admin/trips", "Trips", "BEER", ["ID"]),
-            (f"{BASE_URL}/admin/transactions", "Transaction Manager", "TRANSACTIONS", ["ID"])
-        ]
-        xlsx_paths = []
-        for url, page_name, file_name, unique_key in pages:
-            file_path = download_and_merge_csv(session, url, page_name, file_name, unique_key)
-            if file_path:
-                xlsx_paths.append(file_path)
-                print(f"✅ Processed {page_name}")
-            else:
-                print(f"❌ Failed to process {page_name}")
-        if xlsx_paths:
-            push_to_git(REPO_PATH, xlsx_paths)
-        return xlsx_paths
-    except Exception as e:
-        st.warning(f"Error downloading data: {str(e)}")
-        return []
-
-# Function to push to Git
-def push_to_git(repo_path, files):
-    try:
-        repo = git.Repo(repo_path)
-        repo.remotes[REPO_REMOTE].pull()
-        repo.index.add(files)
-        commit_message = f"Update XLSX files - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        repo.index.commit(commit_message)
-        repo.remotes[REPO_REMOTE].push()
-        print(f"Successfully pushed {len(files)} files to the repository.")
-    except Exception as e:
-        st.warning(f"Error pushing to Git: {str(e)}")
 
 # Function to load or initialize geocode cache
 def load_geocode_cache():
@@ -952,21 +840,13 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
 def main():
     st.title("Union App Metrics Dashboard")
     try:
-        # Sidebar option to skip downloads
-        st.sidebar.subheader("Data Settings")
-        skip_download = st.sidebar.checkbox("Skip Data Download (Use Existing/Placeholder Files)", value=False)
         st.cache_data.clear()
-        xlsx_paths = []
-        if not skip_download:
-            with st.spinner("Downloading and updating data..."):
-                xlsx_paths = download_all_data()
-                if not xlsx_paths:
-                    st.warning("No new data downloaded. Using or creating placeholder files.")
-        else:
-            st.info("Skipping data download as per user selection.")
+        with st.spinner("Loading data..."):
+            df = load_data()
+            df_passengers = load_passengers_data()
+            df_drivers = load_drivers_data()
         min_date = datetime(2023, 1, 1).date()
         max_date = datetime.now().date()
-        df = load_data()
         if not df.empty and 'Trip Date' in df.columns:
             min_date = df['Trip Date'].min().date()
             max_date = df['Trip Date'].max().date()
@@ -979,8 +859,8 @@ def main():
         if len(date_range) == 2:
             df = df[(df['Trip Date'].dt.date >= date_range[0]) &
                     (df['Trip Date'].dt.date <= date_range[1])]
-        df_passengers = load_passengers_data(date_range)
-        df_drivers = load_drivers_data(date_range)
+            df_passengers = load_passengers_data(date_range)
+            df_drivers = load_drivers_data(date_range)
         if df.empty:
             st.warning("No trip data loaded. Dashboard will display limited functionality.")
         if "heatmap_data" not in st.session_state:
