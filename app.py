@@ -508,24 +508,21 @@ def passenger_insights(df):
     except Exception as e:
         st.error(f"Error in passenger insights: {str(e)}")
 
-def passenger_value_segmentation(df):
+def top_passengers_by_trips(df):
     try:
-        if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
+        if 'Passenger' not in df.columns:
             return
-        passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
-        if len(passenger_revenue.unique()) < 3:
-            st.warning("Not enough unique passenger revenue values for segmentation (requires at least 3 unique values).")
-            return
-        bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
-        segment_counts = bins.value_counts()
-        fig = px.pie(
-            values=segment_counts.values,
-            names=segment_counts.index,
-            title="Passenger Value Segmentation"
+        top_passengers = df.groupby('Passenger').size().nlargest(5)
+        fig = px.bar(
+            x=top_passengers.values,
+            y=top_passengers.index,
+            orientation='h',
+            title="Top 5 Passengers by Trip Count",
+            labels={'x': 'Number of Trips', 'y': 'Passenger'}
         )
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
-        st.error(f"Error in passenger value segmentation: {str(e)}")
+        st.error(f"Error in top passengers by trips: {str(e)}")
 
 def top_10_drivers_by_earnings(df):
     try:
@@ -552,6 +549,11 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
             (df['Passenger'].isin(union_staff_names)) &
             (df['Trip Status'] == 'Job Completed')
         ][['Passenger', 'Trip Date', 'Trip Pay Amount Cleaned', 'Distance']]
+        if not staff_trips.empty:
+            # Calculate trip count per staff member
+            trip_counts = staff_trips.groupby('Passenger').size().reset_index(name='Trip Count')
+            # Merge trip counts back into staff_trips
+            staff_trips = staff_trips.merge(trip_counts, on='Passenger', how='left')
         return staff_trips
     except Exception as e:
         st.error(f"Error in get completed trips by union passengers: {str(e)}")
@@ -559,9 +561,9 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
 
 def most_frequent_locations(df):
     try:
-        if 'Pickup Location' not in df.columns or 'Dropoff Location' not in df.columns:
+        if 'From Location' not in df.columns or 'Dropoff Location' not in df.columns:
             return
-        pickup_counts = df['Pickup Location'].value_counts().head(5)
+        pickup_counts = df['From Location'].value_counts().head(5)
         dropoff_counts = df['Dropoff Location'].value_counts().head(5)
         col1, col2 = st.columns(2)
         with col1:
@@ -584,6 +586,22 @@ def most_frequent_locations(df):
             st.plotly_chart(fig2, use_container_width=True)
     except Exception as e:
         st.error(f"Error in most frequent locations: {str(e)}")
+
+def top_pickup_locations_metric(df):
+    try:
+        if 'From Location' not in df.columns:
+            return
+        pickup_counts = df['From Location'].value_counts().head(5)
+        fig = px.bar(
+            x=pickup_counts.values,
+            y=pickup_counts.index,
+            orientation='h',
+            title="Top 5 Pickup Locations by Trip Count",
+            labels={'x': 'Number of Trips', 'y': 'Location'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error in top pickup locations metric: {str(e)}")
 
 def peak_hours(df):
     try:
@@ -888,7 +906,7 @@ def main():
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
             passenger_insights(df)
-            passenger_value_segmentation(df)
+            top_passengers_by_trips(df)
             top_10_drivers_by_earnings(df)
 
             st.markdown("---")
@@ -916,6 +934,7 @@ def main():
 
         with tab4:
             st.header("Geographic Analysis")
+            top_pickup_locations_metric(df)
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
