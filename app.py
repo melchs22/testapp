@@ -76,11 +76,20 @@ def extract_ugx_amount(value):
 # Function to load passengers data with date filtering
 def load_passengers_data(date_range=None):
     try:
+        if not os.path.exists(PASSENGERS_FILE_PATH):
+            st.warning(f"Passengers file not found at {PASSENGERS_FILE_PATH}. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
+        if 'ID' not in df.columns or 'Created' not in df.columns:
+            st.warning("Missing 'ID' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
+        df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
-
+        else:
+            st.warning("No 'Wallet Balance' column found in PASSENGERS.xlsx. Setting to 0.")
+            df['Wallet Balance'] = 0.0
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -88,18 +97,30 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
+        if not os.path.exists(DRIVERS_FILE_PATH):
+            st.warning(f"Drivers file not found at {DRIVERS_FILE_PATH}. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance', 'Commission Owed'])
         df = pd.read_excel(DRIVERS_FILE_PATH)
+        if 'ID' not in df.columns or 'Created' not in df.columns:
+            st.warning("Missing 'ID' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance', 'Commission Owed'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
+        df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
+        else:
+            st.warning("No 'Wallet Balance' column found in DRIVERS.xlsx. Setting to 0.")
+            df['Wallet Balance'] = 0.0
         if 'Commission Owed' in df.columns:
             df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
-
+        else:
+            st.warning("No 'Commission Owed' column found in DRIVERS.xlsx. Setting to 0.")
+            df['Commission Owed'] = 0.0
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -107,67 +128,61 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance', 'Commission Owed'])
 
 # Function to load and merge transactions data
 def load_transactions_data():
     try:
+        if not os.path.exists(TRANSACTIONS_FILE_PATH):
+            st.warning(f"Transactions file not found at {TRANSACTIONS_FILE_PATH}. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['Company Commission Cleaned', 'Pay Mode'])
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
-        
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Company Amt (UGX)' column found in transactions data")
             transactions_df['Company Commission Cleaned'] = 0.0
-            
         if 'Pay Mode' in transactions_df.columns:
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
             transactions_df['Pay Mode'] = 'Unknown'
-            
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['Company Commission Cleaned', 'Pay Mode'])
 
 def load_data():
     try:
+        if not os.path.exists(DATA_FILE_PATH):
+            st.warning(f"Data file not found at {DATA_FILE_PATH}. Returning empty DataFrame.")
+            return pd.DataFrame()
         df = pd.read_excel(DATA_FILE_PATH)
-        
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
                 df['Company Commission Cleaned'] += transactions_df['Company Commission Cleaned']
             elif 'Company Commission Cleaned' not in df.columns:
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
-                
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
-
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
-
         if 'Trip Pay Amount' in df.columns:
             df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
-
         df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
-
         if 'Company Commission Cleaned' not in df.columns:
             st.warning("No company commission data found - creating placeholder")
             df['Company Commission Cleaned'] = 0.0
-
         if 'Pay Mode' not in df.columns:
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
-
         return df
-
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
@@ -175,8 +190,8 @@ def load_data():
 # Define metrics functions
 def passenger_metrics(df_passengers):
     try:
-        app_downloads = len(df_passengers) if not df_passengers.empty else 0
-        passenger_wallet_balance = float(df_passengers['Wallet Balance'].sum()) if 'Wallet Balance' in df_passengers.columns else 0.0
+        app_downloads = df_passengers['ID'].nunique() if not df_passengers.empty else 0
+        passenger_wallet_balance = float(df_passengers['Wallet Balance'].sum()) if 'Wallet Balance' in df_passengers.columns and not df_passengers.empty else 0.0
         return app_downloads, passenger_wallet_balance
     except Exception as e:
         st.error(f"Error in passenger metrics: {str(e)}")
@@ -184,9 +199,9 @@ def passenger_metrics(df_passengers):
 
 def driver_metrics(df_drivers):
     try:
-        riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
-        driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
-        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns else 0.0
+        riders_onboarded = df_drivers['ID'].nunique() if not df_drivers.empty else 0
+        driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns and not df_drivers.empty else 0.0
+        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns and not df_drivers.empty else 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
