@@ -378,11 +378,10 @@ def driver_earnings_per_trip(df):
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
-        avg_earnings = df['ape
-        avg_ainput('Starting with a clean slate')
+        avg_earnings = df['Driver Earnings'].mean()
         st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX")
     except Exception as e:
-        st.error(f"error in driver earnings per trip: {str(e)}")
+        st.error(f"Error in driver earnings per trip: {str(e)}")
 
 def fare_per_km(df):
     try:
@@ -476,14 +475,15 @@ def unique_driver_count(df):
 
 def top_drivers_by_revenue(df):
     try:
-        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
+        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Trip Status' not in df.columns:
             return
-        top_drivers = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        top_drivers = completed_trips.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
         fig = px.bar(
             x=top_drivers.values,
             y=top_drivers.index,
             orientation='h',
-            title="Top 5 Drivers by Revenue",
+            title="Top 5 Drivers by Revenue (Completed Trips)",
             labels={'x': 'Revenue (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -548,15 +548,16 @@ def passenger_value_segmentation(df):
 
 def top_10_drivers_by_earnings(df):
     try:
-        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
+        if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns or 'Trip Status' not in df.columns:
             return
-        df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
-        top_drivers = df.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        completed_trips['Driver Earnings'] = completed_trips['Trip Pay Amount Cleaned'] - completed_trips['Company Commission Cleaned']
+        top_drivers = completed_trips.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
         fig = px.bar(
             x=top_drivers.values,
             y=top_drivers.index,
             orientation='h',
-            title="Top 10 Drivers by Earnings",
+            title="Top 10 Drivers by Earnings (Completed Trips)",
             labels={'x': 'Earnings (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
