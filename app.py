@@ -84,11 +84,11 @@ def load_passengers_data(date_range=None):
     try:
         if not os.path.exists(PASSENGERS_FILE_PATH):
             st.warning(f"Passengers file not found at {PASSENGERS_FILE_PATH}. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df = pd.read_excel(PASSENGERS_FILE_PATH)
         if 'ID' not in df.columns or 'Created' not in df.columns:
-            st.warning("Missing 'ID' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+            st.warning("Missing 'Id' or 'Created' column in PASSENGERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
@@ -103,18 +103,18 @@ def load_passengers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading passengers data: {str(e)}")
-        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
 
 # Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
         if not os.path.exists(DRIVERS_FILE_PATH):
             st.warning(f"Drivers file not found at {DRIVERS_FILE_PATH}. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df = pd.read_excel(DRIVERS_FILE_PATH)
-        if 'ID' not in df.columns or 'Created' not in df.columns:
-            st.warning("Missing 'ID' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
-            return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+        if 'Id' not in df.columns or 'Created' not in df.columns:
+            st.warning("Missing 'Id' or 'Created' column in DRIVERS.xlsx. Returning empty DataFrame.")
+            return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         df = df.dropna(subset=['Created'])  # Drop rows with invalid Created dates
         if 'Wallet Balance' in df.columns:
@@ -129,7 +129,7 @@ def load_drivers_data(date_range=None):
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
-        return pd.DataFrame(columns=['ID', 'Created', 'Wallet Balance'])
+        return pd.DataFrame(columns=['Id', 'Created', 'Wallet Balance'])
 
 # Function to load and merge transactions data
 def load_transactions_data():
@@ -191,7 +191,7 @@ def load_data():
 # Define metrics functions
 def passenger_metrics(df_passengers):
     try:
-        app_downloads = df_passengers['ID'].nunique() if not df_passengers.empty else 0
+        app_downloads = df_passengers['Id'].nunique() if not df_passengers.empty else 0
         passenger_wallet_balance = float(df_passengers['Wallet Balance'].sum()) if 'Wallet Balance' in df_passengers.columns and not df_passengers.empty else 0.0
         return app_downloads, passenger_wallet_balance
     except Exception as e:
@@ -200,7 +200,7 @@ def passenger_metrics(df_passengers):
 
 def driver_metrics(df_drivers):
     try:
-        riders_onboarded = df_drivers['ID'].nunique() if not df_drivers.empty else 0
+        riders_onboarded = df_drivers['Id'].nunique() if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns and not df_drivers.empty:
             driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
             commission_owed = float(abs(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()))
