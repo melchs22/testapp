@@ -97,13 +97,6 @@ def load_drivers_data(date_range=None):
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
-        if 'Commission Owed' in df.columns:
-            df['Commission Owed'] = df['Commission Owed'].apply(extract_ugx_amount)
-
-        if date_range and len(date_range) == 2:
-            start_date, end_date = date_range
-            df = df[(df['Created'].dt.date >= start_date) &
-                    (df['Created'].dt.date <= end_date)]
         return df
     except Exception as e:
         st.error(f"Error loading drivers data: {str(e)}")
@@ -185,8 +178,14 @@ def passenger_metrics(df_passengers):
 def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
-        driver_wallet_balance = float(df_drivers['Wallet Balance'].sum()) if 'Wallet Balance' in df_drivers.columns else 0.0
-        commission_owed = float(df_drivers['Commission Owed'].sum()) if 'Commission Owed' in df_drivers.columns else 0.0
+        if 'Wallet Balance' in df_drivers.columns:
+            # Sum positive values for Driver Wallet Balance
+            driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
+            # Sum absolute of negative values for Commission Owed
+            commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].abs().sum())
+        else:
+            driver_wallet_balance = 0.0
+            commission_owed = 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
     except Exception as e:
         st.error(f"Error in driver metrics: {str(e)}")
