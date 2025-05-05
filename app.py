@@ -353,10 +353,11 @@ def driver_earnings_per_trip(df):
 
 def fare_per_km(df):
     try:
-        if 'Trip Pay Amount Cleaned' not in df.columns or 'Distance' not in df.columns:
+        if 'Trip Pay Amount Cleaned' not in df.columns or 'Distance' not in df.columns or 'Trip Status' not in df.columns:
             return
-        df['Fare per KM'] = df['Trip Pay Amount Cleaned'] / df['Distance'].replace(0, 1)
-        avg_fare_per_km = df['Fare per KM'].mean()
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
+        avg_fare_per_km = completed_trips['Fare per KM'].mean()
         st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in fare per km: {str(e)}")
