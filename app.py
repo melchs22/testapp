@@ -113,7 +113,7 @@ def driver_metrics(drivers_df):
     commission_owed = abs(drivers_df[drivers_df['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in drivers_df.columns else 0
     return riders_onboarded, driver_wallet_balance, commission_owed
 
-# Updated load_data with exact 'Id' matching and robust Trip Date handling
+# Updated load_data with exact 'Id' and improved Trip Date handling
 def load_data():
     try:
         # Load trips data
@@ -176,12 +176,8 @@ def load_data():
         completed_trips = df_trips[df_trips['Trip Status'] == 'Job Completed'].copy()
         if not df_transactions.empty:
             # Check for 'Id' column (exact match)
-            trip_id_col_trips = 'Id' if 'Id' in df_trips.columns else None
-            trip_id_col_trans = 'Id' if 'Id' in df_transactions.columns else None
-            if trip_id_col_trips and trip_id_col_trans:
-                df_transactions = df_transactions.rename(columns={'Id': 'Trip ID'})
-                completed_trips = completed_trips.rename(columns={'Id': 'Trip ID'})
-                merge_cols = ['Trip ID']
+            if 'Id' in df_trips.columns and 'Id' in df_transactions.columns:
+                merge_cols = ['Id']
             else:
                 # Fallback: Match on Trip Date, Driver, Passenger
                 st.warning("No 'Id' column found in one or both files, attempting to match on Trip Date, Driver, Passenger")
