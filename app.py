@@ -272,9 +272,10 @@ def total_trips_by_status(df):
 
 def total_distance_covered(df):
     try:
-        if 'Distance' not in df.columns:
+        if 'Distance' not in df.columns or 'Trip Status' not in df.columns:
             return
-        total_distance = df['Distance'].sum()
+        completed_trips = df[df['Trip Status'] == 'Job Completed']
+        total_distance = completed_trips['Distance'].sum()
         st.metric("Total Distance Covered", f"{total_distance:,.0f} km")
     except Exception as e:
         st.error(f"Error in total distance covered: {str(e)}")
