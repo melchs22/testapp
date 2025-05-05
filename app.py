@@ -378,11 +378,10 @@ def total_trips_by_type(df):
         if 'Trip Type' not in df.columns:
             return
         type_counts = df['Trip Type'].value_counts()
-        fig = px.bar(
-            x=type_counts.index,
-            y=type_counts.values,
-            title="Trips by Type",
-            labels={'x': 'Trip Type', 'y': 'Number of Trips'}
+        fig = px.pie(
+            values=type_counts.values,
+            names=type_counts.index,
+            title="Trips by Type"
         )
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
@@ -868,7 +867,7 @@ def main():
                         st.warning("Union Staff file is empty or does not contain columns.")
                     else:
                         union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
-                        st.metric("Total Union Staff Members", len(union_staff_names))
+                        st.metric("Total Union's Staff Members", len(union_staff_names))
 
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
