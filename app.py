@@ -107,26 +107,31 @@ def passenger_metrics(passengers_df):
 def driver_metrics(drivers_df):
     if drivers_df.empty:
         return 0, 0, 0
-    # Riders Onboarded: Count rows where Created is within date range
     riders_onboarded = len(drivers_df)
-    # Driver Wallet Balance: Sum of positive values
     driver_wallet_balance = drivers_df[drivers_df['Wallet Balance'] > 0]['Wallet Balance'].sum() if 'Wallet Balance' in drivers_df.columns else 0
-    # Commission Owed: Sum of negative values (absolute)
     commission_owed = abs(drivers_df[drivers_df['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in drivers_df.columns else 0
     return riders_onboarded, driver_wallet_balance, commission_owed
 
+# Updated load_data with robust column detection
 def load_data():
     try:
         if not os.path.exists(DATA_FILE_PATH):
             st.warning(f"Data file not found at {DATA_FILE_PATH}")
             return pd.DataFrame()
         df = pd.read_excel(DATA_FILE_PATH)
+        
+        # Log column names for debugging
+        actual_columns = df.columns.tolist()
+        st.write("Columns in BEER.xlsx:", actual_columns)
+
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
 
-        if 'Trip Pay Amount' in df.columns:
+        # Flexible column matching for Trip Pay Amount
+        trip_pay_col = next((col for col in df.columns if 'trip pay' in col.lower()), None)
+        if trip_pay_col:
             def extract_and_sum_amounts(value):
                 try:
                     if pd.isna(value):
@@ -135,24 +140,112 @@ def load_data():
                     return sum(float(amount) for amount in amounts) if amounts else 0.0
                 except:
                     return 0.0
-            df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_and_sum_amounts)
+            df['Trip Pay Amount Cleaned'] = df[trip_pay_col].apply(extract_and_sum_amounts)
         else:
-            st.warning("No 'Trip Pay Amount' column found")
+            st.warning("No 'Trip Pay Amount' column found. Available columns: " + ", ".join(actual_columns))
             df['Trip Pay Amount Cleaned'] = 0.0
 
         df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
-        if 'Company Amt (UGX)' in df.columns:
-            df['Company Commission Cleaned'] = pd.to_numeric(df['Company Amt (UGX)'], errors='coerce').fillna(0)
+
+        # Flexible column matching for Company Amt (UGX)
+        company_amt_col = next((col for col in df.columns if 'company amt' in col.lower() or 'company amount' in col.lower()), None)
+        if company_amt_col:
+            df['Company Commission Cleaned'] = pd.to_numeric(df[company_amt_col], errors='coerce').fillna(0)
         else:
-            st.warning("No 'Company Amt (UGX)' column found")
+            st.warning("No 'Company Amt (UGX)' column found. Available columns: " + ", ".join(actual_columns))
             df['Company Commission Cleaned'] = 0.0
-        if 'Pay Mode' not in df.columns:
-            st.warning("No 'Pay Mode' column found")
+
+        # Flexible column matching for Pay Mode
+        pay_mode_col = next((col for col in df.columns if 'pay mode' in col.lower() or 'payment mode' in col.lower()), None)
+        if pay_mode_col:
+            df['Pay Mode'] = df[pay_mode_col].fillna('Unknown')
+        else:
+            st.warning("No 'Pay Mode' column found. Available columns: " + ", ".join(actual_columns))
             df['Pay Mode'] = 'Unknown'
+
         return df
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
+
+# New Metrics Functions
+def trip_completion_rate(df):
+    if 'Trip Status' not in df.columns:
+        return None
+    completed_trips = df[df['Trip Status'] == 'Job Completed'].shape[0]
+    total_trips = df.shape[0]
+    return (completed_trips / total_trips * 100) if total_trips > 0 else 0
+
+def daily_active_users(df):
+    if 'Trip Date' not in df.columns or 'Passenger' not in df.columns or 'Driver' not in df.columns:
+        return None
+    df['Date'] = df['Trip Date'].dt.date
+    dau = df.groupby('Date').agg({
+        'Passenger': 'nunique',
+        'Driver': 'nunique'
+    }).reset_index()
+    dau.columns = ['Date', 'Active Passengers', 'Active Drivers']
+    return dau
+
+def plot_dau(df):
+    dau = daily_active_users(df)
+    if dau is not None:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=dau['Date'], y=dau['Active Passengers'], name='Active Passengers', line=dict(color='blue')))
+        fig.add_trace(go.Scatter(x=dau['Date'], y=dau['Active Drivers'], name='Active Drivers', line=dict(color='green')))
+        fig.update_layout(title='Daily Active Users', xaxis_title='Date', yaxis_title='Number of Users')
+        st.plotly_chart(fig, use_container_width=True)
+
+def net_revenue_per_trip(df):
+    total_revenue = df['Trip Pay Amount Cleaned'].sum()
+    total_commission = df['Company Commission Cleaned'].sum()
+    num_trips = len(df)
+    return ((total_revenue - total_commission) / num_trips) if num_trips > 0 else 0
+
+def payment_method_success_rate(df):
+    if 'Pay Mode' not in df.columns or 'Trip Status' not in df.columns:
+        return None
+    completed_trips = df[df['Trip Status'] == 'Job Completed']
+    non_cash_trips = completed_trips[completed_trips['Pay Mode'].str.lower() != 'cash'].shape[0]
+    total_completed = completed_trips.shape[0]
+    return (non_cash_trips / total_completed * 100) if total_completed > 0 else 0
+
+def repeat_passenger_rate(df):
+    if 'Passenger' not in df.columns or 'Trip Status' not in df.columns:
+        return None
+    completed_trips = df[df['Trip Status'] == 'Job Completed']
+    passenger_trip_counts = completed_trips['Passenger'].value_counts()
+    repeat_passengers = passenger_trip_counts[passenger_trip_counts > 1].count()
+    total_passengers = passenger_trip_counts.count()
+    return (repeat_passengers / total_passengers * 100) if total_passengers > 0 else 0
+
+def driver_churn_rate(df, df_drivers):
+    if 'Driver' not in df.columns or df.empty or df_drivers.empty:
+        return None
+    active_drivers = df['Driver'].nunique()
+    total_drivers = len(df_drivers)
+    inactive_drivers = total_drivers - active_drivers
+    return (inactive_drivers / total_drivers * 100) if total_drivers > 0 else 0
+
+def hotspot_analysis(df):
+    if 'From Location' not in df.columns or 'Trip Hour' not in df.columns:
+        return None
+    top_locations = df['From Location'].value_counts().nlargest(5).index
+    hotspot_data = df[df['From Location'].isin(top_locations)].groupby(['Trip Hour', 'From Location']).size().reset_index(name='Trips')
+    return hotspot_data
+
+def plot_hotspot_analysis(df):
+    hotspot_data = hotspot_analysis(df)
+    if hotspot_data is not None:
+        fig = px.bar(
+            hotspot_data,
+            x='Trip Hour',
+            y='Trips',
+            color='From Location',
+            title='Pickup Hotspots by Hour',
+            labels={'Trip Hour': 'Hour of Day', 'Trips': 'Number of Trips'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 def calculate_cancellation_rate(df):
     if 'Trip Status' not in df.columns:
@@ -523,8 +616,9 @@ def get_download_data(df, df_passengers, df_drivers, union_staff_df):
         'Union Staff': union_staff_df
     }
 
+# Updated create_metrics_pdf with new metrics
 def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded,
-                       passenger_wallet_balance, driver_wallet_balance, commission_owed):
+                       passenger_wallet_balance, driver_wallet_balance, commission_owed, df_drivers):
     pdf = FPDF()
     pdf.add_page()
     try:
@@ -548,10 +642,17 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     avg_distance = df['Distance'].mean() if 'Distance' in df.columns else 0
     cancellation_rate = calculate_cancellation_rate(df) or 0
     timeout_rate = calculate_passenger_search_timeout(df) or 0
+    completion_rate = trip_completion_rate(df) or 0
     unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
     trips_per_driver = total_trips / unique_drivers if unique_drivers > 0 else 0
+    dau = daily_active_users(df)
+    avg_passenger_dau = dau['Active Passengers'].mean() if dau is not None else 0
+    avg_driver_dau = dau['Active Drivers'].mean() if dau is not None else 0
     pdf.cell(200, 10, txt=f"Total Requests: {total_trips}", ln=1)
     pdf.cell(200, 10, txt=f"Completed Trips: {completed_trips}", ln=1)
+    pdf.cell(200, 10, txt=f"Trip Completion Rate: {completion_rate:.1f}%", ln=1)
+    pdf.cell(200, 10, txt=f"Average Daily Active Passengers: {avg_passenger_dau:.0f}", ln=1)
+    pdf.cell(200, 10, txt=f"Average Daily Active Drivers: {avg_driver_dau:.0f}", ln=1)
     pdf.cell(200, 10, txt=f"Average Distance: {avg_distance:.1f} km", ln=1)
     pdf.cell(200, 10, txt=f"Driver Cancellation Rate: {cancellation_rate:.1f}%", ln=1)
     pdf.cell(200, 10, txt=f"Passenger Search Timeout: {timeout_rate:.1f}%", ln=1)
@@ -563,7 +664,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     pdf.cell(200, 10, txt=f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", ln=1)
     pdf.ln(5)
     pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(200, 5, txt="Explanation: In ride-hailing, high cancellation rates on specific days may indicate driver dissatisfaction or pricing issues, reducing rider trust. Daily spikes in search timeouts suggest insufficient driver availability during peak hours.")
+    pdf.multi_cell(200, 5, txt="Explanation: A high daily completion rate indicates reliable service, while DAU reflects engagement. Drops in completion or spikes in timeouts on specific days may signal operational issues like driver shortages or app glitches.")
     pdf.ln(10)
 
     # Section 2: Financial Metrics
@@ -577,11 +678,15 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     avg_commission = total_commission / total_trips if total_trips > 0 else 0
     revenue_per_driver = total_revenue / unique_drivers if unique_drivers > 0 else 0
     earnings_per_trip = gross_profit / total_trips if total_trips > 0 else 0
+    net_revenue = net_revenue_per_trip(df)
+    payment_success = payment_method_success_rate(df) or 0
     fare_per_km = total_revenue / df['Distance'].sum() if df['Distance'].sum() > 0 else 0
     revenue_share = (total_commission / total_revenue * 100) if total_revenue > 0 else 0
     pdf.cell(200, 10, txt=f"Total Value of Rides: {total_revenue:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Total Commission: {total_commission:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Rider Revenue: {gross_profit:,.0f} UGX", ln=1)
+    pdf.cell(200, 10, txt=f"Net Revenue per Trip: {net_revenue:,.0f} UGX", ln=1)
+    pdf.cell(200, 10, txt=f"Non-Cash Payment Success Rate: {payment_success:.1f}%", ln=1)
     pdf.cell(200, 10, txt=f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Commission Owed: {commission_owed:,.0f} UGX", ln=1)
@@ -593,16 +698,20 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     pdf.cell(200, 10, txt=f"Revenue Share (Company vs Driver): {revenue_share:.2f}%", ln=1)
     pdf.ln(5)
     pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(200, 5, txt="Explanation: Daily revenue per driver variations highlight driver engagement or market demand. Higher fare per km on certain days may reflect surge pricing or longer trips, impacting rider affordability.")
+    pdf.multi_cell(200, 5, txt="Explanation: Daily net revenue per trip shows profitability trends. Lower values or drops in non-cash payment success on certain days may indicate payment issues or short, low-value trips.")
     pdf.ln(10)
 
     # Section 3: User Analysis Metrics
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="3. User Analysis Metrics", ln=1)
     pdf.set_font("Arial", size=12)
+    repeat_rate = repeat_passenger_rate(df) or 0
+    churn_rate = driver_churn_rate(df, df_drivers) or 0
     pdf.cell(200, 10, txt=f"Passenger App Downloads: {app_downloads}", ln=1)
     pdf.cell(200, 10, txt=f"Riders Onboarded: {riders_onboarded}", ln=1)
     pdf.cell(200, 10, txt=f"Number of Unique Drivers: {unique_drivers}", ln=1)
+    pdf.cell(200, 10, txt=f"Repeat Passenger Rate: {repeat_rate:.1f}%", ln=1)
+    pdf.cell(200, 10, txt=f"Driver Churn Rate: {churn_rate:.1f}%", ln=1)
     pdf.cell(200, 10, txt=f"Driver Retention Rate: {retention_rate:.1f}%", ln=1)
     pdf.cell(200, 10, txt=f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", ln=1)
     pdf.ln(5)
@@ -624,7 +733,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
             pdf.cell(200, 7, txt=f"{i}. {passenger}: {trips} trips", ln=1)
     pdf.ln(5)
     pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(200, 5, txt="Explanation: Daily onboarding trends show recruitment effectiveness. High passenger-to-driver ratios on certain days may indicate driver shortages, affecting service reliability.")
+    pdf.multi_cell(200, 5, txt="Explanation: High repeat passenger rates and low churn rates on certain days reflect loyalty and engagement. High churn may indicate driver dissatisfaction, requiring retention strategies.")
     pdf.ln(10)
 
     # Section 4: Geographic Metrics
@@ -641,9 +750,15 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(200, 10, txt="Top 5 Drop-off Locations:", ln=1)
         for i, (location, count) in enumerate(top_dropoffs.items(), 1):
             pdf.cell(200, 7, txt=f"{i}. {location}: {count} trips", ln=1)
+    hotspot_data = hotspot_analysis(df)
+    if hotspot_data is not None:
+        pdf.cell(200, 10, txt="Top 5 Pickup Hotspots by Hour:", ln=1)
+        top_hotspots = hotspot_data.groupby('From Location')['Trips'].sum().nlargest(5)
+        for i, (location, trips) in enumerate(top_hotspots.items(), 1):
+            pdf.cell(200, 7, txt=f"{i}. {location}: {trips} trips", ln=1)
     pdf.ln(5)
     pdf.set_font("Arial", 'I', 10)
-    pdf.multi_cell(200, 5, txt="Explanation: Daily changes in top pickup/drop-off locations reveal demand patterns, guiding driver allocation strategies.")
+    pdf.multi_cell(200, 5, txt="Explanation: Hourly hotspot trends guide driver allocation. Daily changes in top locations reveal demand patterns, optimizing service reliability.")
     return pdf
 
 def get_completed_trips_by_union_passengers(df, union_staff_names):
@@ -729,7 +844,7 @@ def main():
     )
     pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio,
                              app_downloads, riders_onboarded, passenger_wallet_balance,
-                             driver_wallet_balance, commission_owed)
+                             driver_wallet_balance, commission_owed, df_drivers)
     pdf_output = pdf.output(dest='S').encode('latin1')
     st.sidebar.download_button(
         label="📄 Download Metrics Report (PDF)",
@@ -755,18 +870,25 @@ def main():
             cancellation_rate = calculate_cancellation_rate(df)
             st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%" if cancellation_rate is not None else "N/A")
         with col5:
+            completion_rate = trip_completion_rate(df)
+            st.metric("Trip Completion Rate", f"{completion_rate:.1f}%" if completion_rate is not None else "N/A")
+        col6, col7, col8 = st.columns(3)
+        with col6:
             timeout_rate = calculate_passenger_search_timeout(df)
             st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%" if timeout_rate is not None else "N/A")
+        with col7:
+            trips_per_driver(df)
+        with col8:
+            st.metric("Passenger App Downloads", app_downloads)
+        col9, col10 = st.columns(2)
+        with col9:
+            st.metric("Riders Onboarded", riders_onboarded)
+        with col10:
+            unique_driver_count(df)
         status_breakdown_fig = completed_vs_cancelled_daily(df)
         if status_breakdown_fig:
             st.plotly_chart(status_breakdown_fig, use_container_width=True)
-        col6, col7, col8 = st.columns(3)
-        with col6:
-            trips_per_driver(df)
-        with col7:
-            st.metric("Passenger App Downloads", app_downloads)
-        with col8:
-            st.metric("Riders Onboarded", riders_onboarded)
+        plot_dau(df)
         total_trips_by_status(df)
         total_distance_covered(df)
         revenue_by_day(df)
@@ -796,11 +918,15 @@ def main():
         with col8:
             revenue_per_driver(df)
         with col9:
-            driver_earnings_per_trip(df)
-        col10, col11 = st.columns(2)
+            net_revenue = net_revenue_per_trip(df)
+            st.metric("Net Revenue per Trip", f"{net_revenue:,.0f} UGX")
+        col10, col11, col12 = st.columns(3)
         with col10:
-            fare_per_km(df)
+            payment_success = payment_method_success_rate(df)
+            st.metric("Non-Cash Payment Success Rate", f"{payment_success:.1f}%" if payment_success is not None else "N/A")
         with col11:
+            fare_per_km(df)
+        with col12:
             revenue_share(df)
         total_trips_by_type(df)
         payment_method_revenue(df)
@@ -816,13 +942,22 @@ def main():
             st.metric("Passenger App Downloads", app_downloads)
         with col3:
             st.metric("Riders Onboarded", riders_onboarded)
-        col4, col5 = st.columns(2)
+        col4, col5, col6 = st.columns(3)
         with col4:
             st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
                       help="Percentage of onboarded riders who are active drivers")
         with col5:
             st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
                       help="Number of passengers per active driver")
+        with col6:
+            repeat_rate = repeat_passenger_rate(df)
+            st.metric("Repeat Passenger Rate", f"{repeat_rate:.1f}%" if repeat_rate is not None else "N/A")
+        col7, col8 = st.columns(2)
+        with col7:
+            churn_rate = driver_churn_rate(df, df_drivers)
+            st.metric("Driver Churn Rate", f"{churn_rate:.1f}%" if churn_rate is not None else "N/A")
+        with col8:
+            st.metric("Number of Unique Drivers", unique_drivers)
         top_drivers_by_revenue(df)
         driver_performance_comparison(df)
         passenger_insights(df)
@@ -845,6 +980,7 @@ def main():
         st.header("Geographic Analysis")
         most_frequent_locations(df)
         peak_hours(df)
+        plot_hotspot_analysis(df)
         trip_status_trends(df)
         customer_payment_methods(df)
 
