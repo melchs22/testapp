@@ -495,39 +495,6 @@ def passenger_insights(df):
     except Exception as e:
         st.error(f"Error in passenger insights: {str(e)}")
 
-def passenger_value_segmentation(df):
-    try:
-        if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            return
-        passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
-        unique_values = passenger_revenue.nunique()
-        
-        # Adjust number of bins based on unique values
-        if unique_values >= 3:
-            labels = ['Low', 'Medium', 'High']
-            q = 3
-        elif unique_values == 2:
-            labels = ['Low', 'High']
-            q = 2
-        else:
-            st.warning("Insufficient unique passenger revenue values for segmentation.")
-            return
-        
-        try:
-            bins = pd.qcut(passenger_revenue, q=q, labels=labels, duplicates='drop')
-            segment_counts = bins.value_counts()
-            fig = px.pie(
-                values=segment_counts.values,
-                names=segment_counts.index,
-                title="Passenger Value Segmentation"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        except ValueError as e:
-            st.warning(f"Error in passenger value segmentation: {str(e)}. Unable to create segments due to data distribution.")
-            return
-    except Exception as e:
-        st.error(f"Error in passenger value segmentation: {str(e)}")
-
 def top_10_drivers_by_earnings(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
@@ -681,7 +648,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         # Ensure all numeric values are floats or integers
         total_trips = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
-        total_revenue = float(df['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
+        total_revenue = float(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else 0.0
         total_commission = float(df['Company Commission Cleaned'].sum()) if 'Company Commission Cleaned' in df.columns else 0.0
         app_downloads = int(app_downloads) if app_downloads is not None else 0
         riders_onboarded = int(riders_onboarded) if riders_onboarded is not None else 0
@@ -802,7 +769,7 @@ def main():
                 else:
                     st.metric("Driver Cancellation Rate", "N/A")
             with col5:
-                timeout_rate = calculate_passenger_search_timeout(df)
+                timeout_rate = calculatepromised to do later(df)
                 if timeout_rate is not None:
                     st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
                 else:
@@ -833,7 +800,7 @@ def main():
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                total_revenue = df['Trip Pay Amount Cleaned'].sum()
+                total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()
                 st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX")
             with col2:
                 total_commission(df)
@@ -889,7 +856,6 @@ def main():
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
             passenger_insights(df)
-            passenger_value_segmentation(df)
             top_10_drivers_by_earnings(df)
 
             st.markdown("---")
