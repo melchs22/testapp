@@ -113,7 +113,7 @@ def driver_metrics(drivers_df):
     commission_owed = abs(drivers_df[drivers_df['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in drivers_df.columns else 0
     return riders_onboarded, driver_wallet_balance, commission_owed
 
-# Updated load_data to merge BEER.xlsx and TRANSACTIONS.xlsx
+# Load data with merge of BEER.xlsx and TRANSACTIONS.xlsx
 def load_data():
     try:
         # Load trips data
@@ -199,7 +199,7 @@ def load_data():
             merged_completed['Pay Mode'] = merged_completed['Pay Mode'].fillna('Unknown')
 
             # Update original dataframe
-            df_trips = df_trips[df_trips['Trip Status'] != 'Job Completed'].append(merged_completed, ignore_index=True)
+            df_trips = pd.concat([df_trips[df_trips['Trip Status'] != 'Job Completed'], merged_completed], ignore_index=True)
 
         return df_trips
     except Exception as e:
@@ -724,7 +724,8 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     pdf.cell(200, 10, txt=f"Rider Revenue: {gross_profit:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Net Revenue per Trip: {net_revenue:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Non-Cash Payment Success Rate: {payment_success:.1f}%", ln=1)
-    pdf.cell(200, 10, txt=f"Passenger Wallet Balance: {pass Bowen, 10, txt=f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", ln=1)
+    pdf.cell(200, 10, txt=f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", ln=1)
+    pdf.cell(200, 10, txt=f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Commission Owed: {commission_owed:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Average Revenue per Trip: {avg_revenue:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Average Commission per Trip: {avg_commission:,.0f} UGX", ln=1)
