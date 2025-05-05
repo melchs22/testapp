@@ -50,7 +50,8 @@ st.markdown("""
 
 PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
 DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
-DATA_FILE_PATH = r"./BEER.xlsx"
+TRIPS_FILE_PATH = r"./BEER.xlsx"
+TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
 UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 
 # Function to load passengers data with date filtering
@@ -99,7 +100,7 @@ def load_drivers_data(date_range=None):
 def passenger_metrics(passengers_df):
     if passengers_df.empty:
         return 0, 0
-    app_downloads = len(passengers_df)  # Count rows as app downloads
+    app_downloads = len(passengers_df)
     wallet_balance = passengers_df['Wallet Balance'].sum() if 'Wallet Balance' in passengers_df.columns else 0
     return app_downloads, wallet_balance
 
@@ -112,25 +113,30 @@ def driver_metrics(drivers_df):
     commission_owed = abs(drivers_df[drivers_df['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in drivers_df.columns else 0
     return riders_onboarded, driver_wallet_balance, commission_owed
 
-# Updated load_data with robust column detection
+# Updated load_data to merge BEER.xlsx and TRANSACTIONS.xlsx
 def load_data():
     try:
-        if not os.path.exists(DATA_FILE_PATH):
-            st.warning(f"Data file not found at {DATA_FILE_PATH}")
+        # Load trips data
+        if not os.path.exists(TRIPS_FILE_PATH):
+            st.warning(f"Trips file not found at {TRIPS_FILE_PATH}")
             return pd.DataFrame()
-        df = pd.read_excel(DATA_FILE_PATH)
-        
-        # Log column names for debugging
-        actual_columns = df.columns.tolist()
-        st.write("Columns in BEER.xlsx:", actual_columns)
+        df_trips = pd.read_excel(TRIPS_FILE_PATH)
+        st.write("Columns in BEER.xlsx:", df_trips.columns.tolist())
 
-        df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
-        df['Trip Hour'] = df['Trip Date'].dt.hour
-        df['Day of Week'] = df['Trip Date'].dt.day_name()
-        df['Month'] = df['Trip Date'].dt.month_name()
+        # Load transactions data
+        if not os.path.exists(TRANSACTIONS_FILE_PATH):
+            st.warning(f"Transactions file not found at {TRANSACTIONS_FILE_PATH}")
+            return df_trips
+        df_transactions = pd.read_excel(TRANSACTIONS_FILE_PATH)
+        st.write("Columns in TRANSACTIONS.xlsx:", df_transactions.columns.tolist())
 
-        # Flexible column matching for Trip Pay Amount
-        trip_pay_col = next((col for col in df.columns if 'trip pay' in col.lower()), None)
+        df_trips['Trip Date'] = pd.to_datetime(df_trips['Trip Date'], errors='coerce')
+        df_trips['Trip Hour'] = df_trips['Trip Date'].dt.hour
+        df_trips['Day of Week'] = df_trips['Trip Date'].dt.day_name()
+        df_trips['Month'] = df_trips['Trip Date'].dt.month_name()
+
+        # Handle Trip Pay Amount
+        trip_pay_col = next((col for col in df_trips.columns if 'trip pay' in col.lower()), None)
         if trip_pay_col:
             def extract_and_sum_amounts(value):
                 try:
@@ -140,30 +146,62 @@ def load_data():
                     return sum(float(amount) for amount in amounts) if amounts else 0.0
                 except:
                     return 0.0
-            df['Trip Pay Amount Cleaned'] = df[trip_pay_col].apply(extract_and_sum_amounts)
+            df_trips['Trip Pay Amount Cleaned'] = df_trips[trip_pay_col].apply(extract_and_sum_amounts)
         else:
-            st.warning("No 'Trip Pay Amount' column found. Available columns: " + ", ".join(actual_columns))
-            df['Trip Pay Amount Cleaned'] = 0.0
+            st.warning("No 'Trip Pay Amount' column found in BEER.xlsx")
+            df_trips['Trip Pay Amount Cleaned'] = 0.0
 
-        df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
+        df_trips['Distance'] = pd.to_numeric(df_trips['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
 
-        # Flexible column matching for Company Amt (UGX)
-        company_amt_col = next((col for col in df.columns if 'company amt' in col.lower() or 'company amount' in col.lower()), None)
-        if company_amt_col:
-            df['Company Commission Cleaned'] = pd.to_numeric(df[company_amt_col], errors='coerce').fillna(0)
-        else:
-            st.warning("No 'Company Amt (UGX)' column found. Available columns: " + ", ".join(actual_columns))
-            df['Company Commission Cleaned'] = 0.0
+        # Initialize default columns
+        df_trips['Company Commission Cleaned'] = 0.0
+        df_trips['Pay Mode'] = 'Unknown'
 
-        # Flexible column matching for Pay Mode
-        pay_mode_col = next((col for col in df.columns if 'pay mode' in col.lower() or 'payment mode' in col.lower()), None)
-        if pay_mode_col:
-            df['Pay Mode'] = df[pay_mode_col].fillna('Unknown')
-        else:
-            st.warning("No 'Pay Mode' column found. Available columns: " + ", ".join(actual_columns))
-            df['Pay Mode'] = 'Unknown'
+        # Merge with transactions for completed trips
+        completed_trips = df_trips[df_trips['Trip Status'] == 'Job Completed'].copy()
+        if not df_transactions.empty:
+            # Assume Trip ID is the linking key (replace with actual key if different)
+            trip_id_col_trips = next((col for col in df_trips.columns if 'trip id' in col.lower()), None)
+            trip_id_col_trans = next((col for col in df_transactions.columns if 'trip id' in col.lower()), None)
+            if trip_id_col_trips and trip_id_col_trans:
+                df_transactions = df_transactions.rename(columns={trip_id_col_trans: 'Trip ID'})
+                completed_trips = completed_trips.rename(columns={trip_id_col_trips: 'Trip ID'})
+                merge_cols = ['Trip ID']
+            else:
+                # Fallback: Match on Trip Date, Driver, Passenger
+                st.warning("No Trip ID found, attempting to match on Trip Date, Driver, Passenger")
+                merge_cols = ['Trip Date', 'Driver', 'Passenger']
+                df_transactions['Trip Date'] = pd.to_datetime(df_transactions['Trip Date'], errors='coerce')
 
-        return df
+            # Find Company Amt and Pay Mode columns
+            company_amt_col = next((col for col in df_transactions.columns if 'company amt' in col.lower() or 'company amount' in col.lower()), None)
+            pay_mode_col = next((col for col in df_transactions.columns if 'pay mode' in col.lower() or 'payment mode' in col.lower()), None)
+
+            if company_amt_col:
+                df_transactions['Company Commission Cleaned'] = pd.to_numeric(df_transactions[company_amt_col], errors='coerce').fillna(0)
+            else:
+                st.warning("No 'Company Amt (UGX)' column found in TRANSACTIONS.xlsx")
+                df_transactions['Company Commission Cleaned'] = 0.0
+
+            if pay_mode_col:
+                df_transactions['Pay Mode'] = df_transactions[pay_mode_col].fillna('Unknown')
+            else:
+                st.warning("No 'Pay Mode' column found in TRANSACTIONS.xlsx")
+                df_transactions['Pay Mode'] = 'Unknown'
+
+            # Merge completed trips with transactions
+            merged_completed = completed_trips.merge(
+                df_transactions[merge_cols + ['Company Commission Cleaned', 'Pay Mode']],
+                on=merge_cols,
+                how='left'
+            )
+            merged_completed['Company Commission Cleaned'] = merged_completed['Company Commission Cleaned'].fillna(0.0)
+            merged_completed['Pay Mode'] = merged_completed['Pay Mode'].fillna('Unknown')
+
+            # Update original dataframe
+            df_trips = df_trips[df_trips['Trip Status'] != 'Job Completed'].append(merged_completed, ignore_index=True)
+
+        return df_trips
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
@@ -616,7 +654,6 @@ def get_download_data(df, df_passengers, df_drivers, union_staff_df):
         'Union Staff': union_staff_df
     }
 
-# Updated create_metrics_pdf with new metrics
 def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded,
                        passenger_wallet_balance, driver_wallet_balance, commission_owed, df_drivers):
     pdf = FPDF()
@@ -687,8 +724,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     pdf.cell(200, 10, txt=f"Rider Revenue: {gross_profit:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Net Revenue per Trip: {net_revenue:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Non-Cash Payment Success Rate: {payment_success:.1f}%", ln=1)
-    pdf.cell(200, 10, txt=f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", ln=1)
-    pdf.cell(200, 10, txt=f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", ln=1)
+    pdf.cell(200, 10, txt=f"Passenger Wallet Balance: {pass Bowen, 10, txt=f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Commission Owed: {commission_owed:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Average Revenue per Trip: {avg_revenue:,.0f} UGX", ln=1)
     pdf.cell(200, 10, txt=f"Average Commission per Trip: {avg_commission:,.0f} UGX", ln=1)
