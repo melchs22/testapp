@@ -113,7 +113,7 @@ def driver_metrics(drivers_df):
     commission_owed = abs(drivers_df[drivers_df['Wallet Balance'] < 0]['Wallet Balance'].sum()) if 'Wallet Balance' in drivers_df.columns else 0
     return riders_onboarded, driver_wallet_balance, commission_owed
 
-# Updated load_data with robust column checking
+# Updated load_data with exact 'Id' matching and robust Trip Date handling
 def load_data():
     try:
         # Load trips data
@@ -122,22 +122,21 @@ def load_data():
             return pd.DataFrame()
         df_trips = pd.read_excel(TRIPS_FILE_PATH)
         st.write("Columns in BEER.xlsx:", df_trips.columns.tolist())
+        if not df_trips.empty:
+            st.write("Sample data from BEER.xlsx (first 2 rows):", df_trips.head(2))
 
         # Find Trip Date column
-        trip_date_col = next((col for col in df_trips.columns if 'trip date' in col.lower() or 'date' in col.lower()), None)
+        trip_date_col = next((col for col in df_trips.columns if 'date' in col.lower() or 'trip date' in col.lower()), None)
         if not trip_date_col:
-            st.error("No 'Trip Date' column found in BEER.xlsx. Available columns: " + str(df_trips.columns.tolist()))
+            st.error(f"No 'Trip Date' column found in BEER.xlsx. Available columns: {df_trips.columns.tolist()}")
             return pd.DataFrame()
         df_trips = df_trips.rename(columns={trip_date_col: 'Trip Date'})
 
-        # Load transactions data
-        if not os.path.exists(TRANSACTIONS_FILE_PATH):
-            st.warning(f"Transactions file not found at {TRANSACTIONS_FILE_PATH}")
-            return df_trips
-        df_transactions = pd.read_excel(TRANSACTIONS_FILE_PATH)
-        st.write("Columns in TRANSACTIONS.xlsx:", df_transactions.columns.tolist())
-
+        # Convert Trip Date to datetime
         df_trips['Trip Date'] = pd.to_datetime(df_trips['Trip Date'], errors='coerce')
+        if df_trips['Trip Date'].isna().all():
+            st.error("All 'Trip Date' values in BEER.xlsx are invalid or unparseable.")
+            return pd.DataFrame()
         df_trips['Trip Hour'] = df_trips['Trip Date'].dt.hour
         df_trips['Day of Week'] = df_trips['Trip Date'].dt.day_name()
         df_trips['Month'] = df_trips['Trip Date'].dt.month_name()
@@ -164,21 +163,42 @@ def load_data():
         df_trips['Company Commission Cleaned'] = 0.0
         df_trips['Pay Mode'] = 'Unknown'
 
+        # Load transactions data
+        if not os.path.exists(TRANSACTIONS_FILE_PATH):
+            st.warning(f"Transactions file not found at {TRANSACTIONS_FILE_PATH}")
+            return df_trips
+        df_transactions = pd.read_excel(TRANSACTIONS_FILE_PATH)
+        st.write("Columns in TRANSACTIONS.xlsx:", df_transactions.columns.tolist())
+        if not df_transactions.empty:
+            st.write("Sample data from TRANSACTIONS.xlsx (first 2 rows):", df_transactions.head(2))
+
         # Merge with transactions for completed trips
         completed_trips = df_trips[df_trips['Trip Status'] == 'Job Completed'].copy()
         if not df_transactions.empty:
-            # Assume Trip ID is the linking key (replace with actual key if different)
-            trip_id_col_trips = next((col for col in df_trips.columns if 'trip id' in col.lower()), None)
-            trip_id_col_trans = next((col for col in df_transactions.columns if 'trip id' in col.lower()), None)
+            # Check for 'Id' column (exact match)
+            trip_id_col_trips = 'Id' if 'Id' in df_trips.columns else None
+            trip_id_col_trans = 'Id' if 'Id' in df_transactions.columns else None
             if trip_id_col_trips and trip_id_col_trans:
-                df_transactions = df_transactions.rename(columns={trip_id_col_trans: 'Trip Id'})
-                completed_trips = completed_trips.rename(columns={trip_id_col_trips: 'Trip Id'})
-                merge_cols = ['Trip Id']
+                df_transactions = df_transactions.rename(columns={'Id': 'Trip ID'})
+                completed_trips = completed_trips.rename(columns={'Id': 'Trip ID'})
+                merge_cols = ['Trip ID']
             else:
                 # Fallback: Match on Trip Date, Driver, Passenger
-                st.warning("No Trip Id found, attempting to match on Trip Date, Driver, Passenger")
-                merge_cols = ['Trip Date', 'Driver', 'Passenger']
+                st.warning("No 'Id' column found in one or both files, attempting to match on Trip Date, Driver, Passenger")
+                # Verify required columns for fallback
+                required_cols = ['Driver', 'Passenger']
+                trip_date_trans_col = next((col for col in df_transactions.columns if 'date' in col.lower() or 'trip date' in col.lower()), None)
+                missing_cols = [col for col in required_cols if col not in df_trips.columns or col not in df_transactions.columns]
+                if not trip_date_trans_col or missing_cols:
+                    st.error(f"Cannot perform fallback merge. Missing columns in BEER.xlsx or TRANSACTIONS.xlsx: "
+                             f"Trip Date (TRANSACTIONS.xlsx): {trip_date_trans_col}, Missing: {missing_cols}")
+                    return df_trips
+                df_transactions = df_transactions.rename(columns={trip_date_trans_col: 'Trip Date'})
                 df_transactions['Trip Date'] = pd.to_datetime(df_transactions['Trip Date'], errors='coerce')
+                if df_transactions['Trip Date'].isna().all():
+                    st.error("All 'Trip Date' values in TRANSACTIONS.xlsx are invalid or unparseable.")
+                    return df_trips
+                merge_cols = ['Trip Date', 'Driver', 'Passenger']
 
             # Find Company Amt and Pay Mode columns
             company_amt_col = next((col for col in df_transactions.columns if 'company amt' in col.lower() or 'company amount' in col.lower()), None)
