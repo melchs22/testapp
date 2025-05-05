@@ -217,8 +217,8 @@ def calculate_passenger_search_timeout(df):
         if 'Trip Status' not in df.columns:
             return None
         total_trips = len(df)
-        timeout_trips = len(df[df['Trip Status'].str.contains('Timeout', case=False, na=False)])
-        return (timeout_trips / total_trips * 100) if total_trips > 0 else 0.0
+        expired_trips = len(df[df['Trip Status'].str.lower() == 'expired'])
+        return (expired_trips / total_trips * 100) if total_trips > 0 else 0.0
     except:
         return None
 
@@ -462,10 +462,10 @@ def driver_performance_comparison(df):
         if 'Driver' not in df.columns:
             return
         driver_stats = df.groupby('Driver').agg({
+            'Id': 'count',
             'Trip Pay Amount Cleaned': 'sum',
-            'Distance': 'sum',
-            'Trip Date': 'count'
-        }).rename(columns={'Trip Date': 'Trip Count'})
+            'Distance': 'sum'
+        }).rename(columns={'Id': 'Trip Count'})
         fig = px.scatter(
             driver_stats,
             x='Trip Count',
@@ -499,14 +499,31 @@ def passenger_value_segmentation(df):
         if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
             return
         passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
-        bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
-        segment_counts = bins.value_counts()
-        fig = px.pie(
-            values=segment_counts.values,
-            names=segment_counts.index,
-            title="Passenger Value Segmentation"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        unique_values = passenger_revenue.nunique()
+        
+        # Adjust number of bins based on unique values
+        if unique_values >= 3:
+            labels = ['Low', 'Medium', 'High']
+            q = 3
+        elif unique_values == 2:
+            labels = ['Low', 'High']
+            q = 2
+        else:
+            st.warning("Insufficient unique passenger revenue values for segmentation.")
+            return
+        
+        try:
+            bins = pd.qcut(passenger_revenue, q=q, labels=labels, duplicates='drop')
+            segment_counts = bins.value_counts()
+            fig = px.pie(
+                values=segment_counts.values,
+                names=segment_counts.index,
+                title="Passenger Value Segmentation"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except ValueError as e:
+            st.warning(f"Error in passenger value segmentation: {str(e)}. Unable to create segments due to data distribution.")
+            return
     except Exception as e:
         st.error(f"Error in passenger value segmentation: {str(e)}")
 
