@@ -171,12 +171,12 @@ def load_data():
             trip_id_col_trips = next((col for col in df_trips.columns if 'trip id' in col.lower()), None)
             trip_id_col_trans = next((col for col in df_transactions.columns if 'trip id' in col.lower()), None)
             if trip_id_col_trips and trip_id_col_trans:
-                df_transactions = df_transactions.rename(columns={trip_id_col_trans: 'Trip ID'})
-                completed_trips = completed_trips.rename(columns={trip_id_col_trips: 'Trip ID'})
-                merge_cols = ['Trip ID']
+                df_transactions = df_transactions.rename(columns={trip_id_col_trans: 'Trip Id'})
+                completed_trips = completed_trips.rename(columns={trip_id_col_trips: 'Trip Id'})
+                merge_cols = ['Trip Id']
             else:
                 # Fallback: Match on Trip Date, Driver, Passenger
-                st.warning("No Trip ID found, attempting to match on Trip Date, Driver, Passenger")
+                st.warning("No Trip Id found, attempting to match on Trip Date, Driver, Passenger")
                 merge_cols = ['Trip Date', 'Driver', 'Passenger']
                 df_transactions['Trip Date'] = pd.to_datetime(df_transactions['Trip Date'], errors='coerce')
 
