@@ -20,7 +20,7 @@ OPENCAGE_API_KEY = os.getenv('OPENCAGE_API_KEY')
 # Configure page
 st.set_page_config(
     page_title="Union App Metrics Dashboard",
-    page_icon=r"./your_image.png",
+    page_icon=r"./TUTU.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
