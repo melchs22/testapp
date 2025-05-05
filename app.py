@@ -228,16 +228,16 @@ def completed_vs_cancelled_daily(df):
         status_df = df.groupby([df['Trip Date'].dt.date, 'Trip Status']).size().unstack(fill_value=0)
         fig = go.Figure()
         for status in status_df.columns:
-            fig.add_trace(go.Scatter(
+            fig.add_trace(go.Bar(
                 x=status_df.index,
                 y=status_df[status],
-                name=status,
-                mode='lines+markers'
+                name=status
             ))
         fig.update_layout(
             title="Daily Trip Status Breakdown",
             xaxis_title="Date",
             yaxis_title="Number of Trips",
+            barmode='stack',
             template="plotly_white"
         )
         return fig
