@@ -348,11 +348,12 @@ def driver_performance_comparison(df):
     if 'Driver' not in df.columns:
         return
     driver_stats = df.groupby('Driver').agg({
+        'Trip_id': 'count',
         'Trip Pay Amount Cleaned': 'sum',
         'Distance': 'sum',
         'Trip Date': 'count'
     }).rename(columns={'Trip Date': 'Trip Count'}).reset_index()
-    driver  driver_stats.columns = ['Driver', 'Total Revenue (UGX)', 'Total Distance (km)', 'Trip Count']
+    driver_stats.columns = ['Driver', 'Trip_id', 'Total Revenue (UGX)', 'Total Distance (km)', 'Trip Count']
     driver_stats['Total Revenue (UGX)'] = driver_stats['Total Revenue (UGX)'].apply(lambda x: f"{x:,.0f}")
     driver_stats['Total Distance (km)'] = driver_stats['Total Distance (km)'].apply(lambda x: f"{x:,.0f}")
     st.subheader("Driver Performance Comparison")
@@ -680,9 +681,7 @@ def main():
             with col4:
                 cancellation_rate = calculate_cancellation_rate(df)
                 if cancellation_rate is not None:
-                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%",
-
- help="Percentage of trips cancelled by drivers. High rates may signal driver dissatisfaction or operational issues.")
+                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%", help="Percentage of trips cancelled by drivers. High rates may signal driver dissatisfaction or operational issues.")
                 else:
                     st.metric("Driver Cancellation Rate", "N/A")
             with col5:
