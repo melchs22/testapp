@@ -769,7 +769,7 @@ def main():
                 else:
                     st.metric("Driver Cancellation Rate", "N/A")
             with col5:
-                timeout_rate = calculatepromised to do later(df)
+                timeout_rate = calculate_passenger_search_timeout(df)
                 if timeout_rate is not None:
                     st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
                 else:
