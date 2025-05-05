@@ -352,10 +352,11 @@ def driver_performance_comparison(df):
         'Distance': 'sum',
         'Trip Date': 'count'
     }).rename(columns={'Trip Date': 'Trip Count'}).reset_index()
-    driver_stats.columns = ['Driver', 'Total Revenue (UGX)', 'Total Distance (km)', 'Trip Count']
+    driver  driver_stats.columns = ['Driver', 'Total Revenue (UGX)', 'Total Distance (km)', 'Trip Count']
     driver_stats['Total Revenue (UGX)'] = driver_stats['Total Revenue (UGX)'].apply(lambda x: f"{x:,.0f}")
     driver_stats['Total Distance (km)'] = driver_stats['Total Distance (km)'].apply(lambda x: f"{x:,.0f}")
     st.subheader("Driver Performance Comparison")
+    driver_stats = driver_stats.sort_values(by='Total Revenue (UGX)', ascending=False)
     st.dataframe(driver_stats, use_container_width=True)
 
 def passenger_insights(df):
@@ -370,15 +371,32 @@ def passenger_value_segmentation(df):
     if 'Passenger' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
         return
     passenger_revenue = df.groupby('Passenger')['Trip Pay Amount Cleaned'].sum()
-    bins = pd.qcut(passenger_revenue, q=3, labels=['Low', 'Medium', 'High'], duplicates='drop')
-    segment_counts = bins.value_counts().reset_index()
-    segment_counts.columns = ['Segment', 'Number of Passengers']
-    fig = px.pie(
-        values=segment_counts['Number of Passengers'],
-        names=segment_counts['Segment'],
-        title="Passenger Value Segmentation"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    unique_values = passenger_revenue.nunique()
+    
+    # Adjust number of bins based on unique values
+    if unique_values >= 3:
+        labels = ['Low', 'Medium', 'High']
+        q = 3
+    elif unique_values == 2:
+        labels = ['Low', 'High']
+        q = 2
+    else:
+        st.warning("Insufficient unique passenger revenue values for segmentation.")
+        return
+    
+    try:
+        bins = pd.qcut(passenger_revenue, q=q, labels=labels, duplicates='drop')
+        segment_counts = bins.value_counts().reset_index()
+        segment_counts.columns = ['Segment', 'Number of Passengers']
+        fig = px.pie(
+            values=segment_counts['Number of Passengers'],
+            names=segment_counts['Segment'],
+            title="Passenger Value Segmentation"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except ValueError as e:
+        st.warning(f"Error in passenger value segmentation: {str(e)}. Unable to create segments due to data distribution.")
+        return
 
 def top_10_drivers_by_earnings(df):
     if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
@@ -512,7 +530,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         avg_revenue_per_trip = float(df['Trip Pay Amount Cleaned'].mean()) if 'Trip Pay Amount Cleaned' in df.columns else 0.0
         avg_commission_per_trip = float(df['Company Commission Cleaned'].mean()) if 'Company Commission Cleaned' in df.columns else 0.0
         avg_revenue_per_driver = float(df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().mean()) if 'Driver' in df.columns and 'Trip Pay Amount Cleaned' in df.columns else 0.0
-        df['Driver Earnings'] = df[' Lily Pay Amount Cleaned'] - df['Company Commission Cleaned'] if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns else 0
+        df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned'] if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns else 0
         avg_driver_earnings = float(df['Driver Earnings'].mean()) if 'Driver Earnings' in df else 0.0
         completed_trips_df = df[df['Trip Status'] == 'Job Completed'] if 'Trip Status' in df.columns else df
         completed_trips_df['Fare per KM'] = completed_trips_df['Trip Pay Amount Cleaned'] / completed_trips_df['Distance'].replace(0, 1) if 'Trip Pay Amount Cleaned' in completed_trips_df.columns and 'Distance' in completed_trips_df.columns else 0
@@ -662,7 +680,9 @@ def main():
             with col4:
                 cancellation_rate = calculate_cancellation_rate(df)
                 if cancellation_rate is not None:
-                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%", help="Percentage of trips cancelled by drivers. High rates may signal driver dissatisfaction or operational issues.")
+                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%",
+
+ help="Percentage of trips cancelled by drivers. High rates may signal driver dissatisfaction or operational issues.")
                 else:
                     st.metric("Driver Cancellation Rate", "N/A")
             with col5:
