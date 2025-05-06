@@ -80,6 +80,7 @@ def load_passengers_data(date_range=None):
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
+
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -105,16 +106,19 @@ def load_drivers_data(date_range=None):
 def load_transactions_data():
     try:
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
+        
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Company Amt (UGX)' column found in transactions data")
             transactions_df['Company Commission Cleaned'] = 0.0
+            
         if 'Pay Mode' in transactions_df.columns:
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
             transactions_df['Pay Mode'] = 'Unknown'
+            
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
@@ -123,31 +127,40 @@ def load_transactions_data():
 def load_data():
     try:
         df = pd.read_excel(DATA_FILE_PATH)
+        
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
                 df['Company Commission Cleaned'] += transactions_df['Company Commission Cleaned']
             elif 'Company Commission Cleaned' not in df.columns:
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
+                
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
+
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
+
         if 'Trip Pay Amount' in df.columns:
             df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
         else:
             st.warning("No 'Trip Pay Amount' column found - creating placeholder")
             df['Trip Pay Amount Cleaned'] = 0.0
+
         df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
+
         if 'Company Commission Cleaned' not in df.columns:
             st.warning("No company commission data found - creating placeholder")
             df['Company Commission Cleaned'] = 0.0
+
         if 'Pay Mode' not in df.columns:
             st.warning("No 'Pay Mode' column found - adding placeholder")
             df['Pay Mode'] = 'Unknown'
+
         return df
+
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
@@ -166,7 +179,9 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns:
+            # Sum positive values for Driver Wallet Balance
             driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
+            # Sum absolute of negative values for Commission Owed
             commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].abs().sum())
         else:
             driver_wallet_balance = 0.0
@@ -232,11 +247,11 @@ def completed_vs_cancelled_daily(df):
 def trips_per_driver(df):
     try:
         if 'Driver' not in df.columns:
-            st.metric("Trips per Driver", "N/A", help="Average trips per driver. Indicates driver utilization. Low values may suggest oversupply or low demand.")
+            st.metric("Trips per Driver", "N/A")
             return
         trips_by_driver = df.groupby('Driver').size()
         avg_trips = trips_by_driver.mean() if not trips_by_driver.empty else 0
-        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}", help="Average trips per driver. Indicates driver utilization. Low values may suggest oversupply or low demand.")
+        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}")
     except Exception as e:
         st.error(f"Error in trips per driver: {str(e)}")
 
@@ -260,7 +275,7 @@ def total_distance_covered(df):
             return
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         total_distance = completed_trips['Distance'].sum()
-        st.metric("Total Distance Covered", f"{total_distance:,.0f} km", help="Total distance of completed trips. Reflects operational scale. Compare with revenue to assess pricing efficiency.")
+        st.metric("Total Distance Covered", f"{total_distance:,.0f} km")
     except Exception as e:
         st.error(f"Error in total distance covered: {str(e)}")
 
@@ -284,17 +299,17 @@ def avg_revenue_per_trip(df):
         if 'Trip Pay Amount Cleaned' not in df.columns:
             return
         avg_revenue = df['Trip Pay Amount Cleaned'].mean()
-        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX", help="Average revenue per trip. Reflects pricing effectiveness. Low values may indicate underpricing or short trips.")
+        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in avg revenue per trip: {str(e)}")
 
 def total_commission(df):
     try:
         if 'Company Commission Cleaned' not in df.columns:
-            st.metric("Total Commission", "N/A", help="Total commissions earned. Primary revenue source. Increase trip volume if low.")
+            st.metric("Total Commission", "N/A")
             return
         total_comm = df['Company Commission Cleaned'].sum()
-        st.metric("Total Commission", f"{total_comm:,.0f} UGX", help="Total commissions earned. Primary revenue source. Increase trip volume if low.")
+        st.metric("Total Commission", f"{total_comm:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in total commission: {str(e)}")
 
@@ -303,7 +318,7 @@ def gross_profit(df):
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
             return
         gross_profit = df['Company Commission Cleaned'].sum()
-        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX", help="Total commission earned. Shows profitability before expenses. Compare to costs for financial health.")
+        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in gross profit: {str(e)}")
 
@@ -312,7 +327,7 @@ def avg_commission_per_trip(df):
         if 'Company Commission Cleaned' not in df.columns:
             return
         avg_comm = df['Company Commission Cleaned'].mean()
-        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX", help="Average commission per trip. Balances revenue and driver earnings. Adjust if too high or low.")
+        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in avg commission per trip: {str(e)}")
 
@@ -322,7 +337,7 @@ def revenue_per_driver(df):
             return
         revenue_by_driver = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum()
         avg_revenue = revenue_by_driver.mean() if not revenue_by_driver.empty else 0
-        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX", help="Average revenue per driver. Reflects productivity. Low values suggest oversupply or low demand.")
+        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in revenue per driver: {str(e)}")
 
@@ -332,7 +347,7 @@ def driver_earnings_per_trip(df):
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
         avg_earnings = df['Driver Earnings'].mean()
-        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX", help="Average driver earnings after commission. Critical for retention. Low earnings may cause churn.")
+        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in driver earnings per trip: {str(e)}")
 
@@ -343,7 +358,7 @@ def fare_per_km(df):
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
         avg_fare_per_km = completed_trips['Fare per KM'].mean()
-        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX", help="Average revenue per kilometer. Reflects pricing efficiency. Adjust fares if too low.")
+        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in fare per km: {str(e)}")
 
@@ -354,7 +369,7 @@ def revenue_share(df):
         total_revenue = df['Trip Pay Amount Cleaned'].sum()
         total_commission = df['Company Commission Cleaned'].sum()
         revenue_share = (total_commission / total_revenue * 100) if total_revenue > 0 else 0
-        st.metric("Revenue Share", f"{revenue_share:.1f}%", help="Percentage of revenue kept as commission. Balances profitability and driver motivation.")
+        st.metric("Revenue Share", f"{revenue_share:.1f}%")
     except Exception as e:
         st.error(f"Error in revenue share: {str(e)}")
 
@@ -422,7 +437,7 @@ def unique_driver_count(df):
         if 'Driver' not in df.columns:
             return
         unique_drivers = df['Driver'].nunique()
-        st.metric("Unique Drivers", unique_drivers, help="Number of distinct drivers completing trips. Low counts may indicate retention issues.")
+        st.metric("Unique Drivers", unique_drivers)
     except Exception as e:
         st.error(f"Error in unique driver count: {str(e)}")
 
@@ -740,45 +755,23 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         # Geographic Analysis Metrics
         pdf.add_section_title("Geographic Analysis")
         top_pickup_location = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
-        top_dropoff_location = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and eightIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-info-circle" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>'
-st.markdown("""
-<style>
-    .tooltip {
-        position: relative;
-        display: inline-block;
-        cursor: pointer;
-    }
-    .tooltip .tooltiptext {
-        visibility: hidden;
-        width: 220px;
-        background-color: #555;
-        color: #fff;
-        text-align: center;
-        border-radius: 6px;
-        padding: 5px;
-        position: absolute;
-        z-index: 1;
-        bottom: 125%;
-        left: 50%;
-        margin-left: -110px;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }
-    .tooltip:hover .tooltiptext {
-        visibility: visible;
-        opacity: 1;
-    }
-</style>
-""", unsafe_allow_html=True)
+        top_dropoff_location = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and not df['Dropoff Location'].value_counts().empty else "N/A"
+        peak_hour = f"{df['Trip Hour'].value_counts().index[0]}:00" if 'Trip Hour' in df.columns and not df['Trip Hour'].value_counts().empty else "N/A"
+        primary_payment_method = df['Pay Mode'].value_counts().index[0] if 'Pay Mode' in df.columns and not df['Pay Mode'].value_counts().empty else "N/A"
 
-def add_help_icon(metric_name, tooltip_text):
-    return f"""
-    <div class="tooltip">{metric_name} {eightIcon}
-        <span class="tooltiptext">{tooltip_text}</span>
-    </div>
-    """
+        pdf.add_metric("Top Pickup Location", top_pickup_location, 
+                       "Most frequent pickup location, indicating demand hotspots. Allocate more drivers or target promotions in these areas to meet demand.")
+        pdf.add_metric("Top Dropoff Location", top_dropoff_location, 
+                       "Most frequent dropoff location, reflecting travel patterns. Explore partnerships (e.g., with businesses) or optimize routes for these destinations.")
+        pdf.add_metric("Peak Hour", peak_hour, 
+                       "Hour with the most trips, showing peak demand. Schedule drivers or implement surge pricing to balance supply during these times.")
+        pdf.add_metric("Primary Payment Method", primary_payment_method, 
+                       "Most common payment method, reflecting user preferences. Invest in payment infrastructure or promote digital payments if cash dominates.")
 
-# Update the main function to include help icons with HTML tooltips
+        return pdf
+    except Exception as e:
+        st.error(f"Error in create metrics pdf: {str(e)}")
+        return PDF()
 def main():
     st.title("Union App Metrics Dashboard")
 
@@ -857,29 +850,24 @@ def main():
 
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.markdown(add_help_icon("Total Requests", "Total trip requests. High volumes show strong demand. Improve completions if low."), unsafe_allow_html=True)
-                st.metric("", len(df))
+                st.metric("Total Requests", len(df))
             with col2:
                 completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
-                st.markdown(add_help_icon("Completed Trips", "Successful trips from pickup to dropoff. High rates indicate efficiency."), unsafe_allow_html=True)
-                st.metric("", completed_trips)
+                st.metric("Completed Trips", completed_trips)
             with col3:
-                st.markdown(add_help_icon("Avg. Distance", "Average trip distance. Longer trips may strain driver availability."), unsafe_allow_html=True)
-                st.metric("", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
+                st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
             with col4:
                 cancellation_rate = calculate_cancellation_rate(df)
-                st.markdown(add_help_icon("Driver Cancellation Rate", "Percentage of driver-cancelled trips. High rates may frustrate passengers."), unsafe_allow_html=True)
                 if cancellation_rate is not None:
-                    st.metric("", f"{cancellation_rate:.1f}%")
+                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%")
                 else:
-                    st.metric("", "N/A")
+                    st.metric("Driver Cancellation Rate", "N/A")
             with col5:
                 timeout_rate = calculate_passenger_search_timeout(df)
-                st.markdown(add_help_icon("Passenger Search Timeout", "Percentage of trips expiring without driver acceptance. High rates suggest driver shortages."), unsafe_allow_html=True)
                 if timeout_rate is not None:
-                    st.metric("", f"{timeout_rate:.1f}%")
+                    st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
                 else:
-                    st.metric("", "N/A")
+                    st.metric("Passenger Search Timeout", "N/A")
 
             status_breakdown_fig = completed_vs_cancelled_daily(df)
             if status_breakdown_fig:
@@ -891,11 +879,9 @@ def main():
             with col6:
                 trips_per_driver(df)
             with col7:
-                st.markdown(add_help_icon("Passenger App Downloads", "Total app installations. High downloads with low activity suggest onboarding issues."), unsafe_allow_html=True)
-                st.metric("", app_downloads)
+                st.metric("Passenger App Downloads", app_downloads)
             with col8:
-                st.markdown(add_help_icon("Riders Onboarded", "Number of registered drivers. Over-onboarding may reduce earnings."), unsafe_allow_html=True)
-                st.metric("", riders_onboarded)
+                st.metric("Riders Onboarded", riders_onboarded)
 
             total_trips_by_status(df)
             total_distance_covered(df)
@@ -909,8 +895,7 @@ def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()
-                st.markdown(add_help_icon("Total Value Of Rides", "Total revenue from completed trips. Growth shows expansion success."), unsafe_allow_html=True)
-                st.metric("", f"{total_revenue:,.0f} UGX")
+                st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX")
             with col2:
                 total_commission(df)
             with col3:
@@ -918,14 +903,11 @@ def main():
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                st.markdown(add_help_icon("Passenger Wallet Balance", "Funds in passenger wallets. High balances may need promotions to encourage usage."), unsafe_allow_html=True)
-                st.metric("", f"{passenger_wallet_balance:,.0f} UGX")
+                st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX")
             with col5:
-                st.markdown(add_help_icon("Driver Wallet Balance", "Positive balances owed to drivers. High balances may delay payouts."), unsafe_allow_html=True)
-                st.metric("", f"{driver_wallet_balance:,.0f} UGX")
+                st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX")
             with col6:
-                st.markdown(add_help_icon("Commission Owed", "Negative driver balances. High amounts may indicate driver financial strain."), unsafe_allow_html=True)
-                st.metric("", f"{commission_owed:,.0f} UGX")
+                st.metric("Commission Owed", f"{commission_owed:,.0f} UGX")
 
             col7, col8, col9 = st.columns(3)
             with col7:
@@ -953,19 +935,17 @@ def main():
             with col1:
                 unique_driver_count(df)
             with col2:
-                st.markdown(add_help_icon("Passenger App Downloads", "Total app installations. High downloads with low activity suggest onboarding issues."), unsafe_allow_html=True)
-                st.metric("", app_downloads)
+                st.metric("Passenger App Downloads", app_downloads)
             with col3:
-                st.markdown(add_help_icon("Riders Onboarded", "Number of registered drivers. Over-onboarding may reduce earnings."), unsafe_allow_html=True)
-                st.metric("", riders_onboarded)
+                st.metric("Riders Onboarded", riders_onboarded)
 
             col4, col5 = st.columns(2)
             with col4:
-                st.markdown(add_help_icon("Driver Retention Rate", "Percentage of onboarded drivers who are active. Low rates increase recruitment costs."), unsafe_allow_html=True)
-                st.metric("", f"{retention_rate:.1f}%")
+                st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
+                          help="Percentage of onboarded riders who are active drivers")
             with col5:
-                st.markdown(add_help_icon("Passenger-to-Driver Ratio", "Passengers per active driver. High ratios may cause timeouts; low ratios reduce earnings."), unsafe_allow_html=True)
-                st.metric("", f"{passenger_ratio:.1f}")
+                st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
+                          help="Number of passengers per active driver")
 
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
@@ -982,8 +962,7 @@ def main():
                         st.warning("Union Staff file is empty or does not contain columns.")
                     else:
                         union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
-                        st.markdown(add_help_icon("Total Union's Staff Members", "Number of staff listed. High staff rides may need cost allocation."), unsafe_allow_html=True)
-                        st.metric("", len(union_staff_names))
+                        st.metric("Total Union's Staff Members", len(union_staff_names))
 
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
