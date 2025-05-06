@@ -619,7 +619,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
             def header(self):
                 # Add logo
                 try:
-                    self.image(r"./TUTU.png", x=15, y=12, w=25)
+                    self.image(r"./TUTU.png", x=10, y=8, w=30)
                 except Exception as e:
                     self.set_font('Arial', 'I', 8)
                     self.cell(0, 10, f'Could not load logo: {str(e)}', 0, 1, 'L')
@@ -649,7 +649,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        # Date Range
+        # Date Range (Centered)
         start_date_str = 'N/A'
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
@@ -659,7 +659,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                 end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
             except (AttributeError, TypeError):
                 pass
-        pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
+        pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1, 'C')  # Changed to center-align
         pdf.ln(5)
 
         # Overview Metrics
