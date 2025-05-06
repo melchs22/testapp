@@ -1,3 +1,310 @@
+import os
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, ElementClickInterceptedException
+import git
+from datetime import datetime
+import pandas as pd
+import logging
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.service import Service as FirefoxService
+try:
+    import pyautogui  # Optional for pop-up automation
+except ImportError:
+    pyautogui = None
+    print("pyautogui not installed. Manual pop-up handling required. Install with: pip install pyautogui")
+
+# Set up logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('script.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger()
+
+# Hardcoded credentials (consider moving to environment variables)
+USERNAME = "tutu.melchizedek@bodabodaunion.ug"
+PASSWORD = "tutu.melchizedek"
+
+# Git repository details
+REPO_PATH = r"C:\testapp"
+REPO_REMOTE = "origin"
+REPO_BRANCH = "main"
+
+# Download directory
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Set wait time to 30 seconds
+WAIT_TIME = 30
+MAX_RETRIES = 3
+
+def setup_driver(headless=False):
+    options = FirefoxOptions()
+    if headless:
+        options.add_argument("--headless")
+    # Configure Firefox to show Save As pop-up
+    options.set_preference("browser.download.folderList", 0)  # 0 = Desktop (default)
+    options.set_preference("browser.download.dir", DOWNLOAD_DIR)  # Default suggestion
+    options.set_preference("browser.download.manager.showWhenStarting", True)  # Show dialog
+    # Removed: browser.helperApps.neverAsk.saveToDisk to allow pop-up
+
+    try:
+        driver = webdriver.Firefox(options=options)
+        logger.info("Firefox WebDriver initialized successfully.")
+        return driver
+    except Exception as e:
+        logger.error(f"Failed to initialize Firefox WebDriver: {str(e)}")
+        raise
+
+def take_screenshot(driver, filename):
+    try:
+        driver.save_screenshot(filename)
+        logger.info(f"Screenshot saved: {filename}")
+    except Exception as e:
+        logger.error(f"Failed to take screenshot: {str(e)}")
+
+def wait_for_download(download_dir, timeout=60, retries=3):
+    logger.info(f"Waiting for file to download in {download_dir}...")
+    for attempt in range(retries):
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            files = [f for f in os.listdir(download_dir) if not f.endswith('.part')]
+            if files:
+                downloaded_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+                logger.info(f"Download detected: {downloaded_file}")
+                return downloaded_file
+            time.sleep(1)
+        logger.warning(f"Download attempt {attempt + 1}/{retries} failed. Retrying...")
+    logger.error("No file downloaded after all retries.")
+    return None
+
+def download_rename_and_convert_csv(driver, url, page_name, file_name):
+    logger.info(f"Navigating to {page_name} page: {url}")
+    try:
+        driver.get(url)
+        logger.info(f"Immediately searching for CSV button on {page_name} page...")
+
+        # Retry finding and clicking the CSV button
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Updated XPath to target the button in the toolbar above the table
+                csv_button = WebDriverWait(driver, WAIT_TIME).until(
+                    EC.element_to_be_clickable((
+                        By.XPATH, 
+                        "//*[contains(translate(., 'CSV', 'csv'), 'csv') and not(contains(@disabled, 'disabled'))]"
+                        # Fallback: Target button in the actions row
+                        # "//div[contains(@class, 'actions')]//*[contains(translate(., 'CSV', 'csv'), 'csv')]"
+                    ))
+                )
+                logger.info(f"Found CSV button: tag={csv_button.tag_name}, text={csv_button.text}, "
+                           f"enabled={not csv_button.get_attribute('disabled')}, "
+                           f"outerHTML={csv_button.get_attribute('outerHTML')[:200]}...")
+                break
+            except TimeoutException:
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"CSV button not found, retrying ({attempt + 1}/{MAX_RETRIES})...")
+                    time.sleep(5)
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Error finding CSV button: {str(e)}")
+                take_screenshot(driver, f"{page_name}_button_error_{attempt}.png")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(5)
+                else:
+                    raise
+
+        # Clear download directory
+        for f in os.listdir(DOWNLOAD_DIR):
+            os.remove(os.path.join(DOWNLOAD_DIR, f))
+        logger.info(f"Cleared download directory: {DOWNLOAD_DIR}")
+
+        # Attempt to click the button with retries
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Try JavaScript click to bypass potential clickability issues
+                driver.execute_script("arguments[0].scrollIntoView(true);", csv_button)
+                driver.execute_script("arguments[0].click();", csv_button)
+                logger.info(f"Clicked CSV button for {page_name} (attempt {attempt + 1})")
+                break
+            except ElementClickInterceptedException:
+                logger.warning(f"Click intercepted, retrying ({attempt + 1}/{MAX_RETRIES})...")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(f"Error clicking CSV button: {str(e)}")
+                take_screenshot(driver, f"{page_name}_click_error_{attempt}.png")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(2)
+                else:
+                    raise
+
+        # Warn about pop-up and pause for manual handling
+        logger.warning("Firefox Save As pop-up should appear. Please select save location (e.g., DOWNLOAD_DIR) and click Save.")
+        time.sleep(10)  # Pause for manual interaction
+
+        # Optional: Automate pop-up handling with pyautogui (uncomment to use)
+        # if pyautogui:
+        #     time.sleep(2)  # Wait for pop-up to appear
+        #     pyautogui.write(os.path.join(DOWNLOAD_DIR, f"{file_name}.csv"))
+        #     pyautogui.press('enter')
+        #     logger.info("Handled Save As pop-up with pyautogui.")
+        # else:
+        #     logger.warning("pyautogui not available; manual pop-up handling required.")
+
+        # Wait for download with retries
+        downloaded_file = wait_for_download(DOWNLOAD_DIR, timeout=WAIT_TIME * 2, retries=MAX_RETRIES)
+        if not downloaded_file:
+            logger.error(f"Download failed for {page_name}")
+            take_screenshot(driver, f"{page_name}_no_download.png")
+            return None
+
+        if not downloaded_file.lower().endswith('.csv'):
+            logger.warning(f"Downloaded file {downloaded_file} is not a CSV.")
+            take_screenshot(driver, f"{page_name}_wrong_file.png")
+            return None
+
+        logger.info(f"Converting {downloaded_file} to XLSX...")
+        # Fixed typo: download_file → downloaded_file
+        df = pd.read_csv(downloaded_file)
+        new_filename = f"{file_name}.xlsx"
+        new_filepath = os.path.join(REPO_PATH, new_filename)
+        df.to_excel(new_filepath, index=False)
+        os.remove(downloaded_file)
+        logger.info(f"File converted and saved to: {new_filepath}")
+        return new_filename
+
+    except TimeoutException:
+        logger.error(f"Timeout waiting for CSV button on {page_name} page.")
+        take_screenshot(driver, f"{page_name}_timeout.png")
+        logger.debug(f"Page source: {driver.page_source[:1000]}...")
+    except Exception as e:
+        logger.error(f"Error processing {page_name}: {str(e)}")
+        take_screenshot(driver, f"{page_name}_error.png")
+    return None
+
+def push_to_git(repo_path, files):
+    try:
+        repo = git.Repo(repo_path)
+        logger.info("Discarding all local changes...")
+        repo.git.reset('--hard')
+        repo.git.clean('-fd')
+
+        logger.info(f"Pulling latest changes from {REPO_REMOTE}/{REPO_BRANCH}...")
+        repo.remotes[REPO_REMOTE].pull()
+
+        logger.info("Removing existing XLSX files...")
+        for file in os.listdir(repo_path):
+            if file.endswith('.xlsx'):
+                file_path = os.path.join(repo_path, file)
+                os.remove(file_path)
+                repo.git.add(file_path)
+                logger.info(f"Removed and staged: {file}")
+
+        for file in files:
+            src = os.path.join(REPO_PATH, file)
+            repo.git.add(src)
+            logger.info(f"Staged new file: {file}")
+
+        if repo.is_dirty():
+            commit_message = f"Update XLSX files - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            repo.index.commit(commit_message)
+            logger.info(f"Committed changes: {commit_message}")
+            repo.remotes[REPO_REMOTE].push()
+            logger.info("Pushed changes to repository.")
+        else:
+            logger.info("No changes to commit.")
+
+    except Exception as e:
+        logger.error(f"Git operation failed: {str(e)}")
+        raise
+
+def run_csv_download_job():
+    """
+    Run the CSV download, conversion, and Git push job.
+    Returns a dictionary with status and results.
+    """
+    result = {"status": "success", "message": "", "files": []}
+    driver = None
+    try:
+        driver = setup_driver(headless=False)  # Non-headless for manual pop-up handling
+
+        logger.info("Navigating to login page...")
+        driver.get("https://backend.bodabodaunion.ug/admin")
+        WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+
+        logger.info("Entering credentials...")
+        username_field = WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][username]']"))
+        )
+        username_field.clear()
+        username_field.send_keys(USERNAME)
+
+        password_field = WebDriverWait(driver, WAIT_TIME).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='data[User][password]']"))
+        )
+        password_field.clear()
+        password_field.send_keys(PASSWORD)
+
+        login_button = WebDriverWait(driver, WAIT_TIME).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
+        )
+        login_button.click()
+
+        WebDriverWait(driver, WAIT_TIME).until(EC.url_contains("/admin"))
+        if "login" in driver.current_url.lower():
+            logger.error("Login failed: Still on login page.")
+            take_screenshot(driver, "login_failed.png")
+            raise Exception("Login failed.")
+
+        logger.info("Login successful.")
+
+        pages = [
+            ("https://backend.bodabodaunion.ug/admin/drivers", "Drivers", "DRIVERS"),
+            ("https://backend.bodabodaunion.ug/admin/users/storeindex", "Active Passengers", "PASSENGERS"),
+            ("https://backend.bodabodaunion.ug/admin/trips", "Trips", "BEER"),
+            ("https://backend.bodabodaunion.ug/admin/transactions", "Transaction Manager", "TRANSACTIONS")
+        ]
+
+        xlsx_files = []
+        for url, page_name, file_name in pages:
+            file_path = download_rename_and_convert_csv(driver, url, page_name, file_name)
+            if file_path:
+                xlsx_files.append(file_path)
+                logger.info(f"Processed {page_name}: {file_path}")
+            else:
+                logger.warning(f"Failed to process {page_name}")
+
+        if xlsx_files:
+            logger.info("Files processed:")
+            for file in xlsx_files:
+                logger.info(f"- {os.path.join(REPO_PATH, file)}")
+            push_to_git(REPO_PATH, xlsx_files)
+            result["files"] = xlsx_files
+            result["message"] = f"Successfully processed {len(xlsx_files)} files."
+        else:
+            result["status"] = "warning"
+            result["message"] = "No files were processed."
+
+    except Exception as e:
+        result["status"] = "error"
+        result["message"] = f"Job failed: {str(e)}"
+        logger.error(f"Job failed: {str(e)}")
+        take_screenshot(driver, "error.png")
+    finally:
+        if driver:
+            driver.quit()
+            logger.info("Browser closed.")
+    return result
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -12,6 +319,7 @@ import io
 from fpdf import FPDF
 import base64
 import uuid
+from plotly.io import to_image
 
 # Load environment variables
 load_dotenv()
@@ -266,8 +574,10 @@ def total_trips_by_status(df):
             title="Trip Status Distribution"
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in total trips by status: {str(e)}")
+        return None
 
 def total_distance_covered(df):
     try:
@@ -291,8 +601,10 @@ def revenue_by_day(df):
             labels={'x': 'Date', 'y': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in revenue by day: {str(e)}")
+        return None
 
 def avg_revenue_per_trip(df):
     try:
@@ -384,8 +696,10 @@ def total_trips_by_type(df):
             title="Trips by Type"
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in total trips by type: {str(e)}")
+        return None
 
 def payment_method_revenue(df):
     try:
@@ -398,8 +712,10 @@ def payment_method_revenue(df):
             title="Revenue by Payment Method"
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in payment method revenue: {str(e)}")
+        return None
 
 def distance_vs_revenue_scatter(df):
     try:
@@ -413,8 +729,10 @@ def distance_vs_revenue_scatter(df):
             labels={'Distance': 'Distance (km)', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in distance vs revenue scatter: {str(e)}")
+        return None
 
 def weekday_vs_weekend_analysis(df):
     try:
@@ -429,8 +747,10 @@ def weekday_vs_weekend_analysis(df):
             labels={'x': 'Period', 'y': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in weekday vs weekend analysis: {str(e)}")
+        return None
 
 def unique_driver_count(df):
     try:
@@ -454,8 +774,10 @@ def top_drivers_by_revenue(df):
             labels={'x': 'Revenue (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in top drivers by revenue: {str(e)}")
+        return None
 
 def driver_performance_comparison(df):
     try:
@@ -476,8 +798,10 @@ def driver_performance_comparison(df):
             labels={'Trip Count': 'Number of Trips', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in driver performance comparison: {str(e)}")
+        return None
 
 def passenger_insights(df):
     try:
@@ -491,8 +815,10 @@ def passenger_insights(df):
             labels={'x': 'Number of Trips', 'y': 'Number of Passengers'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in passenger insights: {str(e)}")
+        return None
 
 def top_10_drivers_by_earnings(df):
     try:
@@ -508,8 +834,10 @@ def top_10_drivers_by_earnings(df):
             labels={'x': 'Earnings (UGX)', 'y': 'Driver'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in top 10 drivers by earnings: {str(e)}")
+        return None
 
 def get_completed_trips_by_union_passengers(df, union_staff_names):
     try:
@@ -540,6 +868,7 @@ def most_frequent_locations(df):
                 labels={'x': 'Number of Trips', 'y': 'Location'}
             )
             st.plotly_chart(fig1, use_container_width=True)
+            return fig1  # Return the figure for PDF
         with col2:
             fig2 = px.bar(
                 x=dropoff_counts.values,
@@ -549,8 +878,10 @@ def most_frequent_locations(df):
                 labels={'x': 'Number of Trips', 'y': 'Location'}
             )
             st.plotly_chart(fig2, use_container_width=True)
+            return fig2  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in most frequent locations: {str(e)}")
+        return None, None
 
 def peak_hours(df):
     try:
@@ -564,8 +895,10 @@ def peak_hours(df):
             labels={'x': 'Hour of Day', 'y': 'Number of Trips'}
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in peak hours: {str(e)}")
+        return None
 
 def trip_status_trends(df):
     try:
@@ -587,8 +920,10 @@ def trip_status_trends(df):
             template="plotly_white"
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in trip status trends: {str(e)}")
+        return None
 
 def customer_payment_methods(df):
     try:
@@ -601,8 +936,10 @@ def customer_payment_methods(df):
             title="Customer Payment Methods"
         )
         st.plotly_chart(fig, use_container_width=True)
+        return fig  # Return the figure for PDF
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
+        return None
 
 def get_download_data(df):
     try:
@@ -618,8 +955,11 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         class PDF(FPDF):
             def header(self):
                 self.set_font('Arial', 'B', 12)
+                # Add TUTU.png as header image
+                if os.path.exists(r"./TUTU.png"):
+                    self.image(r"./TUTU.png", 10, 8, 33)  # x, y, width in mm
                 self.cell(0, 10, 'Union App Metrics Report', 0, 1, 'C')
-                self.ln(5)
+                self.ln(10)
 
             def footer(self):
                 self.set_y(-15)
@@ -644,33 +984,124 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1)
         pdf.ln(5)
 
-        # Ensure all numeric values are floats or integers
+        # Section: Overview Metrics
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, "Overview Metrics", 0, 1)
+        pdf.set_font('Arial', '', 12)
+        pdf.ln(5)
+        pdf.multi_cell(0, 10, "This section provides a snapshot of trip activity and user engagement.")
+        pdf.ln(5)
+
         total_trips = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
         total_revenue = float(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else 0.0
-        total_commission = float(df['Company Commission Cleaned'].sum()) if 'Company Commission Cleaned' in df.columns else 0.0
+        total_distance = float(df[df['Trip Status'] == 'Job Completed']['Distance'].sum()) if 'Distance' in df.columns and 'Trip Status' in df.columns else 0.0
+        cancellation_rate = calculate_cancellation_rate(df) if calculate_cancellation_rate(df) is not None else 0.0
+        timeout_rate = calculate_passenger_search_timeout(df) if calculate_passenger_search_timeout(df) is not None else 0.0
+        avg_trips = trips_per_driver(df) if 'Driver' in df.columns else "N/A"
         app_downloads = int(app_downloads) if app_downloads is not None else 0
         riders_onboarded = int(riders_onboarded) if riders_onboarded is not None else 0
-        retention_rate = float(retention_rate) if retention_rate is not None else 0.0
-        passenger_ratio = float(passenger_ratio) if passenger_ratio is not None else 0.0
+
+        pdf.cell(0, 10, f"Total Requests: {total_trips}", 0, 1)
+        pdf.cell(0, 10, f"Completed Trips: {completed_trips}", 0, 1)
+        pdf.cell(0, 10, f"Total Revenue: {total_revenue:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Distance Covered: {total_distance:,.0f} km", 0, 1)
+        pdf.cell(0, 10, f"Driver Cancellation Rate: {cancellation_rate:.1f}%", 0, 1)
+        pdf.cell(0, 10, f"Passenger Search Timeout: {timeout_rate:.1f}%", 0, 1)
+        pdf.cell(0, 10, f"Avg. Trips per Driver: {avg_trips if isinstance(avg_trips, str) else f'{avg_trips:.1f}'}", 0, 1)
+        pdf.cell(0, 10, f"Passenger App Downloads: {app_downloads}", 0, 1)
+        pdf.cell(0, 10, f"Riders Onboarded: {riders_onboarded}", 0, 1)
+        pdf.ln(10)
+
+        # Add visualizations
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, "Visualizations", 0, 1)
+        pdf.set_font('Arial', '', 12)
+        pdf.ln(5)
+        pdf.multi_cell(0, 10, "The following charts provide visual insights into trip status, revenue trends, and more.")
+        pdf.ln(5)
+
+        # Generate and add images of charts
+        charts = {
+            "Trip Status Distribution": total_trips_by_status(df),
+            "Daily Revenue Trend": revenue_by_day(df),
+            "Trips by Type": total_trips_by_type(df),
+            "Revenue by Payment Method": payment_method_revenue(df),
+            "Distance vs Revenue": distance_vs_revenue_scatter(df),
+            "Weekday vs Weekend Revenue": weekday_vs_weekend_analysis(df),
+            "Top 5 Drivers by Revenue": top_drivers_by_revenue(df),
+            "Driver Performance Comparison": driver_performance_comparison(df),
+            "Passenger Trip Frequency": passenger_insights(df),
+            "Top 10 Drivers by Earnings": top_10_drivers_by_earnings(df),
+            "Top 5 Pickup Locations": most_frequent_locations(df)[0] if most_frequent_locations(df)[0] else None,
+            "Top 5 Dropoff Locations": most_frequent_locations(df)[1] if most_frequent_locations(df)[1] else None,
+            "Trip Distribution by Hour": peak_hours(df),
+            "Trip Status Trends": trip_status_trends(df),
+            "Customer Payment Methods": customer_payment_methods(df)
+        }
+
+        for title, fig in charts.items():
+            if fig is not None:
+                img_data = to_image(fig, format='png', width=400, height=300)
+                pdf.ln(5)
+                pdf.set_font('Arial', 'B', 12)
+                pdf.cell(0, 10, title, 0, 1)
+                pdf.set_font('Arial', '', 12)
+                pdf.multi_cell(0, 10, f"Explanation: This chart illustrates {title.lower().replace('vs', 'versus').replace('top', 'the top').replace('by', 'by').replace('distribution', 'distribution of data').replace('trends', 'trends over time')}.")
+                pdf.image(io.BytesIO(img_data), x=10, y=None, w=180)
+                pdf.ln(10)
+
+        # Section: Financial Metrics
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, "Financial Metrics", 0, 1)
+        pdf.set_font('Arial', '', 12)
+        pdf.ln(5)
+        pdf.multi_cell(0, 10, "This section details the financial performance of the Union App.")
+        pdf.ln(5)
+
+        total_revenue = float(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()) if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else 0.0
+        total_comm = float(df['Company Commission Cleaned'].sum()) if 'Company Commission Cleaned' in df.columns else 0.0
+        gross_profit_val = total_comm
         passenger_wallet_balance = float(passenger_wallet_balance) if passenger_wallet_balance is not None else 0.0
         driver_wallet_balance = float(driver_wallet_balance) if driver_wallet_balance is not None else 0.0
         commission_owed = float(commission_owed) if commission_owed is not None else 0.0
+        avg_comm = float(df['Company Commission Cleaned'].mean()) if 'Company Commission Cleaned' in df.columns else 0.0
+        revenue_per_driver_val = float(df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().mean()) if 'Driver' in df.columns and 'Trip Pay Amount Cleaned' in df.columns else 0.0
+        driver_earnings = float((df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']).mean()) if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns else 0.0
+        fare_per_km_val = float(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum() / df[df['Trip Status'] == 'Job Completed']['Distance'].replace(0, 1).sum()) if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns else 0.0
+        revenue_share_val = (total_comm / total_revenue * 100) if total_revenue > 0 else 0
 
+        pdf.cell(0, 10, f"Total Value of Rides: {total_revenue:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Total Commission: {total_comm:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Gross Profit: {gross_profit_val:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Avg. Commission per Trip: {avg_comm:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Avg. Revenue per Driver: {revenue_per_driver_val:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Avg. Driver Earnings per Trip: {driver_earnings:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Avg. Fare per KM: {fare_per_km_val:,.0f} UGX", 0, 1)
+        pdf.cell(0, 10, f"Revenue Share: {revenue_share_val:.1f}%", 0, 1)
+        pdf.ln(10)
+
+        # Section: User Metrics
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, "Key Metrics", 0, 1)
+        pdf.cell(0, 10, "User Metrics", 0, 1)
         pdf.set_font('Arial', '', 12)
-        pdf.cell(0, 10, f"Total Trips: {total_trips}", 0, 1)
-        pdf.cell(0, 10, f"Completed Trips: {completed_trips}", 0, 1)
-        pdf.cell(0, 10, f"Total Revenue: {total_revenue:,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Total Commission: {total_commission:,.0f} UGX", 0, 1)
+        pdf.ln(5)
+        pdf.multi_cell(0, 10, "This section analyzes user engagement and performance metrics.")
+        pdf.ln(5)
+
+        unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
+        retention_rate = float(retention_rate) if retention_rate is not None else 0.0
+        passenger_ratio = float(passenger_ratio) if passenger_ratio is not None else 0.0
+
+        pdf.cell(0, 10, f"Unique Drivers: {unique_drivers}", 0, 1)
         pdf.cell(0, 10, f"Passenger App Downloads: {app_downloads}", 0, 1)
         pdf.cell(0, 10, f"Riders Onboarded: {riders_onboarded}", 0, 1)
         pdf.cell(0, 10, f"Driver Retention Rate: {retention_rate:.1f}%", 0, 1)
         pdf.cell(0, 10, f"Passenger-to-Driver Ratio: {passenger_ratio:.1f}", 0, 1)
-        pdf.cell(0, 10, f"Passenger Wallet Balance: {passenger_wallet_balance:,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX", 0, 1)
-        pdf.cell(0, 10, f"Commission Owed: {commission_owed:,.0f} UGX", 0, 1)
+        pdf.ln(10)
 
         return pdf
     except Exception as e:
