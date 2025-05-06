@@ -1,21 +1,20 @@
 import os
 import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, ElementClickInterceptedException
-import git
-from datetime import datetime
+import streamlit as st
 import pandas as pd
-import logging
-from selenium.webdriver.firefox.options import Options as FirefoxOptions
-from selenium.webdriver.firefox.service import Service as FirefoxService
-try:
-    import pyautogui  # Optional for pop-up automation
-except ImportError:
-    pyautogui = None
-    print("pyautogui not installed. Manual pop-up handling required. Install with: pip install pyautogui")
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+import pydeck as pdk
+import requests
+import os
+import re
+from dotenv import load_dotenv
+import io
+from fpdf import FPDF
+import base64
+import uuid
+from plotly.io import to_image
 
 # Set up logging
 logging.basicConfig(
@@ -305,21 +304,7 @@ def run_csv_download_job():
             logger.info("Browser closed.")
     return result
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-import pydeck as pdk
-import requests
-import os
-import re
-from dotenv import load_dotenv
-import io
-from fpdf import FPDF
-import base64
-import uuid
-from plotly.io import to_image
+
 
 # Load environment variables
 load_dotenv()
