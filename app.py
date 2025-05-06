@@ -712,7 +712,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_metric("Total Value of Rides", total_revenue, 
                        "Total revenue from completed trips, reflecting market value. Growth indicates successful expansion or pricing. Stimulate demand if revenue stagnates.")
         pdf.add_metric("Total Commission", total_commission, 
-                       "Sum of commissions earned, the company’s primary revenue. High commissions ensure profitability. Adjust rates or increase trips if commissions are low.")
+                       "Sum of commissions earned, the company's primary revenue. High commissions ensure profitability. Adjust rates or increase trips if commissions are low.")
         pdf.add_metric("Gross Profit", gross_profit, 
                        "Total commission earned, reflecting profitability before expenses. Low profit may signal high discounts or low volume. Compare to costs for financial health.")
         pdf.add_metric("Passenger Wallet Balance", f"{float(passenger_wallet_balance):,.0f} UGX", 
@@ -749,7 +749,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                        "Percentage of onboarded drivers who are active, measuring loyalty. Low retention increases recruitment costs. Improve earnings or policies to boost retention.")
         pdf.add_metric("Passenger-to-Driver Ratio", passenger_ratio_str, 
                        "Number of passengers per active driver, showing supply-demand balance. High ratios may cause timeouts; low ratios reduce driver earnings. Adjust driver onboarding accordingly.")
-        pdf.add_metric("Total Union's Staff Members", total_union_staff, 
+        pdf.add_metric("Total Union Staff Members", total_union_staff, 
                        "Number of staff listed, potentially tracking internal usage. High staff rides may require cost allocation or discounted rates for internal transport.")
 
         # Geographic Analysis Metrics
@@ -772,7 +772,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     except Exception as e:
         st.error(f"Error in create metrics pdf: {str(e)}")
         return PDF()
-
 def main():
     st.title("Union App Metrics Dashboard")
 
