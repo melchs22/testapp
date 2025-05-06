@@ -7,3 +7,4 @@ xlsxwriter
 fpdf
 selenium
 schedule
+U kaleido
