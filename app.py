@@ -59,7 +59,108 @@ UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
 def extract_ugx_amount(value):
     try:
         if pd.isna(value) or value is None:
-            return 0.0
+ عوفيات الدفعات النقدية المستلمة من العملاء.")
+        return pdf
+    except Exception as e:
+        st.error(f"Error in create metrics pdf: {str(e)}")
+        return PDF()
+
+def main():
+    st.title("Union App Metrics Dashboard")
+
+    try:
+        st.cache_data.clear()
+
+        min_date = datetime(2023, 1, 1).date()
+        max_date = datetime.now().date()
+
+        try:
+            df = load_data()
+            if not df.empty and 'Trip Date' in df.columns:
+                min_date = df['Trip Date'].min().date()
+                max_date = df['Trip Date'].max().date()
+        except:
+            pass
+
+        date_range = st.sidebar.date_input(
+            "Date Range",
+            value=[min_date, max_date],
+            min_value=min_date,
+            max_value=max_date
+        )
+
+        df = load_data()
+        if len(date_range) == 2:
+            df = df[(df['Trip Date'].dt.date >= date_range[0]) &
+                    (df['Trip Date'].dt.date <= date_range[1])]
+
+        df_passengers = load_passengers_data(date_range)
+        df_drivers = load_drivers_data(date_range)
+
+        if df.empty:
+            st.error("No data loaded - please check the backend data file")
+            return
+
+        if 'Trip Date' not in df.columns:
+            st.error("No 'Trip Date' column found in the data")
+            return
+
+        app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
+        riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
+
+        unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
+        retention_rate, passenger_ratio = calculate_driver_retention_rate(
+            riders_onboarded, app_downloads, unique_drivers
+        )
+
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Export Data")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            get_download_data(df).to_excel(writer, sheet_name='Dashboard Data', index=False)
+        excel_data = output.getvalue()
+        st.sidebar.download_button(
+            label="📊 Download Full Data (Excel)",
+            data=excel_data,
+            file_name=f"union_app_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio,
+                                 app_downloads, riders_onboarded, passenger_wallet_balance,
+                                 driver_wallet_balance, commission_owed)
+        pdf_output = pdf.output(dest='S').encode('latin1')
+        st.sidebar.download_button(
+            label="📄 Download Metrics Report (PDF)",
+            data=pdf_output,
+            file_name=f"union_app_metrics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            mime="application/pdf"
+        )
+
+        tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Financial", "User Analysis", "Geographic"])
+
+        with tab1:
+            st.header("Trips Overview")
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+            with col1:
+                st.metric("Total Requests", len(df))
+            with col2:
+                completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
+                st.metric("Completed Trips", completed_trips)
+            with col3:
+                st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
+            with col4:
+                cancellation_rate = calculate_cancellation_rate(df)
+                if cancellation_rate is not None:
+                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%")
+                else:
+                    st.metric("Driver Cancellation Rate", "N/A")
+            with col5:
+                timeout_rate = calculate_passenger_search_timeout(df)
+                if timeout_rate is not None:
+                    st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
+                else:
+                    st.metric  return 0.0
         # Convert to string and clean
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
         # Extract numeric part using regex
@@ -717,7 +818,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         passenger_ratio_str = f"{float(passenger_ratio):.1f}" if passenger_ratio is not None else "N/A"
         total_union_staff = len(pd.read_excel(UNION_STAFF_FILE_PATH).iloc[:, 0].dropna()) if os.path.exists(UNION_STAFF_FILE_PATH) else 0
 
-        pdf.add_metric("Unique Drivers", unique_drivers, "Number of unique drivers who completed at least one trip.")
+        pdf.add_metric("Unique Drivers", unique_drivers, "Number of exclusive drivers who completed at least one trip.")
         pdf.add_metric("Passenger App Downloads", int(app_downloads), "Total number of passenger app downloads.")
         pdf.add_metric("Riders Onboarded", int(riders_onboarded), "Total number of drivers onboarded.")
         pdf.add_metric("Driver Retention Rate", retention_rate_str, "Percentage of onboarded riders who are active drivers.")
@@ -728,7 +829,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_section_title("Geographic Analysis")
         top_pickup_location = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
         top_dropoff_location = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and not df['Dropoff Location'].value_counts().empty else "N/A"
-        peak_hour = f"{df['Trip Hour'].value_counts().index[0]}:00" if 'Trip Hour' in df.columns and not df['Trip Hour'].value_countsEmpty else "N/A"
+        peak_hour = f"{df['Trip Hour'].value_counts().index[0]}:00" if 'Trip Hour' in df.columns and not df['Trip Hour'].value_counts().empty else "N/A"
         primary_payment_method = df['Pay Mode'].value_counts().index[0] if 'Pay Mode' in df.columns and not df['Pay Mode'].value_counts().empty else "N/A"
 
         pdf.add_metric("Top Pickup Location", top_pickup_location, "Most frequent pickup location for trips.")
@@ -803,7 +904,7 @@ def main():
         )
         pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio,
                                  app_downloads, riders_onboarded, passenger_wallet_balance,
-                                 driver_wallet_balance, commission_owed)
+                                 driver ambiental_balance, commission_owed)
         pdf_output = pdf.output(dest='S').encode('latin1')
         st.sidebar.download_button(
             label="📄 Download Metrics Report (PDF)",
