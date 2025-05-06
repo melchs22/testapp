@@ -659,7 +659,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
                 end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
             except (AttributeError, TypeError):
                 pass
-        pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1, 'C')  # Changed to center-align
+        pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1, 'C')
         pdf.ln(5)
 
         # Overview Metrics
@@ -676,17 +676,28 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         avg_revenue_per_trip = f"{df['Trip Pay Amount Cleaned'].mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns else "N/A"
         total_commission = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
 
-        pdf.add_metric("Total Requests", total_requests, "Total number of trip requests made within the selected date range.")
-        pdf.add_metric("Completed Trips", completed_trips, "Number of trips successfully completed.")
-        pdf.add_metric("Average Distance", avg_distance, "Average distance traveled per trip.")
-        pdf.add_metric("Driver Cancellation Rate", cancellation_rate_str, "Percentage of trips cancelled by drivers.")
-        pdf.add_metric("Passenger Search Timeout", timeout_rate_str, "Percentage of trips that expired due to no driver acceptance.")
-        pdf.add_metric("Average Trips per Driver", avg_trips_per_driver, "Average number of trips completed per driver.")
-        pdf.add_metric("Passenger App Downloads", int(app_downloads), "Total number of passenger app downloads.")
-        pdf.add_metric("Riders Onboarded", int(riders_onboarded), "Total number of drivers onboarded.")
-        pdf.add_metric("Total Distance Covered", total_distance_covered, "Total distance covered by all completed trips.")
-        pdf.add_metric("Average Revenue per Trip", avg_revenue_per_trip, "Average revenue generated per trip.")
-        pdf.add_metric("Total Commission", total_commission, "Total commission earned by the company.")
+        pdf.add_metric("Total Requests", total_requests, 
+                       "Measures total demand for rides, including all trip requests. High volumes indicate strong user engagement. If completions are low relative to requests, consider onboarding more drivers or improving matching algorithms.")
+        pdf.add_metric("Completed Trips", completed_trips, 
+                       "Counts successful trips from pickup to dropoff, reflecting operational success. High completion rates suggest efficient service and customer satisfaction. Track trends to assess promotions or operational changes.")
+        pdf.add_metric("Average Distance", avg_distance, 
+                       "Average distance per trip, indicating trip length preferences. Longer trips may yield higher fares but strain driver availability. Adjust pricing or incentives if distances increase significantly.")
+        pdf.add_metric("Driver Cancellation Rate", cancellation_rate_str, 
+                       "Percentage of trips cancelled by drivers, reflecting reliability. High rates may frustrate passengers and reduce revenue. Address with driver incentives or better trip assignments.")
+        pdf.add_metric("Passenger Search Timeout", timeout_rate_str, 
+                       "Percentage of trips expiring due to no driver acceptance, indicating supply shortages. High timeouts suggest a need for more drivers or surge incentives in high-demand areas.")
+        pdf.add_metric("Average Trips per Driver", avg_trips_per_driver, 
+                       "Mean trips per driver, measuring utilization. Low values suggest oversupply or low demand. Consider reducing onboarding or boosting passenger promotions if utilization is low.")
+        pdf.add_metric("Passenger App Downloads", int(app_downloads), 
+                       "Total app installations, reflecting market reach. High downloads with low trip activity may indicate onboarding issues. Improve user onboarding to convert downloads to active riders.")
+        pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
+                       "Number of drivers registered, indicating supply. Over-onboarding may reduce earnings and cause churn. Compare to active drivers to assess recruitment efficiency.")
+        pdf.add_metric("Total Distance Covered", total_distance_covered, 
+                       "Sum of distances for completed trips, reflecting operational scale. High distance with low revenue may indicate inefficient pricing. Review fare structures if needed.")
+        pdf.add_metric("Average Revenue per Trip", avg_revenue_per_trip, 
+                       "Mean revenue per trip, reflecting pricing effectiveness. Low values may signal underpricing or short trips. Adjust pricing or promote longer trips to boost revenue.")
+        pdf.add_metric("Total Commission", total_commission, 
+                       "Sum of commissions earned, representing primary revenue. High commissions relative to revenue indicate a sustainable model. Increase trip volume or commission rates if low.")
 
         # Financial Metrics
         pdf.add_section_title("Financial Performance")
@@ -698,17 +709,28 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         fare_per_km = f"{(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'] / df[df['Trip Status'] == 'Job Completed']['Distance'].replace(0, 1)).mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns else "N/A"
         revenue_share = f"{(df['Company Commission Cleaned'].sum() / df['Trip Pay Amount Cleaned'].sum() * 100):.1f}%" if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns and df['Trip Pay Amount Cleaned'].sum() > 0 else "N/A"
 
-        pdf.add_metric("Total Value of Rides", total_revenue, "Total revenue from all completed trips.")
-        pdf.add_metric("Total Commission", total_commission, "Total commission earned by the company.")
-        pdf.add_metric("Gross Profit", gross_profit, "Total profit after accounting for commissions.")
-        pdf.add_metric("Passenger Wallet Balance", f"{float(passenger_wallet_balance):,.0f} UGX", "Total balance in passenger wallets.")
-        pdf.add_metric("Driver Wallet Balance", f"{float(driver_wallet_balance):,.0f} UGX", "Total balance in driver wallets (positive values).")
-        pdf.add_metric("Commission Owed", f"{float(commission_owed):,.0f} UGX", "Total commission owed by drivers (negative wallet balances).")
-        pdf.add_metric("Average Commission per Trip", avg_commission_per_trip, "Average commission earned per trip.")
-        pdf.add_metric("Average Revenue per Driver", avg_revenue_per_driver, "Average revenue generated per driver.")
-        pdf.add_metric("Average Driver Earnings per Trip", driver_earnings_per_trip, "Average earnings per trip for drivers after commission.")
-        pdf.add_metric("Average Fare per KM", fare_per_km, "Average revenue per kilometer for completed trips.")
-        pdf.add_metric("Revenue Share", revenue_share, "Percentage of total revenue retained as commission.")
+        pdf.add_metric("Total Value of Rides", total_revenue, 
+                       "Total revenue from completed trips, reflecting market value. Growth indicates successful expansion or pricing. Stimulate demand if revenue stagnates.")
+        pdf.add_metric("Total Commission", total_commission, 
+                       "Sum of commissions earned, the company’s primary revenue. High commissions ensure profitability. Adjust rates or increase trips if commissions are low.")
+        pdf.add_metric("Gross Profit", gross_profit, 
+                       "Total commission earned, reflecting profitability before expenses. Low profit may signal high discounts or low volume. Compare to costs for financial health.")
+        pdf.add_metric("Passenger Wallet Balance", f"{float(passenger_wallet_balance):,.0f} UGX", 
+                       "Total funds in passenger wallets, showing user commitment. High balances with low activity may require promotions to encourage usage.")
+        pdf.add_metric("Driver Wallet Balance", f"{float(driver_wallet_balance):,.0f} UGX", 
+                       "Total positive balances owed to drivers, reflecting payout obligations. High balances may delay payouts, affecting satisfaction. Ensure timely settlements.")
+        pdf.add_metric("Commission Owed", f"{float(commission_owed):,.0f} UGX", 
+                       "Total negative driver balances, indicating commissions owed. High amounts may signal driver financial strain. Offer flexible repayment plans if needed.")
+        pdf.add_metric("Average Commission per Trip", avg_commission_per_trip, 
+                       "Mean commission per trip, balancing company revenue and driver earnings. Adjust rates if commissions are too high (driver churn) or too low (low revenue).")
+        pdf.add_metric("Average Revenue per Driver", avg_revenue_per_driver, 
+                       "Mean revenue per driver, reflecting productivity. Low values suggest oversupply or low demand. Boost demand or optimize driver allocation.")
+        pdf.add_metric("Average Driver Earnings per Trip", driver_earnings_per_trip, 
+                       "Mean driver earnings after commission, critical for retention. Low earnings may cause churn. Reduce commissions or offer bonuses if earnings are low.")
+        pdf.add_metric("Average Fare per KM", fare_per_km, 
+                       "Mean revenue per kilometer, reflecting pricing efficiency. Low fares may not cover driver costs. Adjust base fares or surge pricing if needed.")
+        pdf.add_metric("Revenue Share", revenue_share, 
+                       "Percentage of revenue retained as commission, defining the revenue model. Balance to ensure profitability and driver motivation. Adjust if imbalanced.")
 
         # User Analysis Metrics
         pdf.add_section_title("User Performance")
@@ -717,12 +739,18 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         passenger_ratio_str = f"{float(passenger_ratio):.1f}" if passenger_ratio is not None else "N/A"
         total_union_staff = len(pd.read_excel(UNION_STAFF_FILE_PATH).iloc[:, 0].dropna()) if os.path.exists(UNION_STAFF_FILE_PATH) else 0
 
-        pdf.add_metric("Unique Drivers", unique_drivers, "Number of unique drivers who completed at least one trip.")
-        pdf.add_metric("Passenger App Downloads", int(app_downloads), "Total number of passenger app downloads.")
-        pdf.add_metric("Riders Onboarded", int(riders_onboarded), "Total number of drivers onboarded.")
-        pdf.add_metric("Driver Retention Rate", retention_rate_str, "Percentage of onboarded riders who are active drivers.")
-        pdf.add_metric("Passenger-to-Driver Ratio", passenger_ratio_str, "Number of passengers per active driver.")
-        pdf.add_metric("Total Union's Staff Members", total_union_staff, "Number of Union staff members listed in the staff file.")
+        pdf.add_metric("Unique Drivers", unique_drivers, 
+                       "Number of distinct drivers completing trips, reflecting active supply. Low counts relative to onboarded drivers suggest retention issues. Implement re-engagement programs.")
+        pdf.add_metric("Passenger App Downloads", int(app_downloads), 
+                       "Total app installations, indicating potential user base growth. High downloads with low activity signal onboarding issues. Enhance onboarding processes.")
+        pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
+                       "Number of drivers registered, reflecting supply capacity. Over-onboarding may lead to low earnings and churn. Optimize recruitment based on demand.")
+        pdf.add_metric("Driver Retention Rate", retention_rate_str, 
+                       "Percentage of onboarded drivers who are active, measuring loyalty. Low retention increases recruitment costs. Improve earnings or policies to boost retention.")
+        pdf.add_metric("Passenger-to-Driver Ratio", passenger_ratio_str, 
+                       "Number of passengers per active driver, showing supply-demand balance. High ratios may cause timeouts; low ratios reduce driver earnings. Adjust driver onboarding accordingly.")
+        pdf.add_metric("Total Union's Staff Members", total_union_staff, 
+                       "Number of staff listed, potentially tracking internal usage. High staff rides may require cost allocation or discounted rates for internal transport.")
 
         # Geographic Analysis Metrics
         pdf.add_section_title("Geographic Analysis")
@@ -731,10 +759,14 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         peak_hour = f"{df['Trip Hour'].value_counts().index[0]}:00" if 'Trip Hour' in df.columns and not df['Trip Hour'].value_counts().empty else "N/A"
         primary_payment_method = df['Pay Mode'].value_counts().index[0] if 'Pay Mode' in df.columns and not df['Pay Mode'].value_counts().empty else "N/A"
 
-        pdf.add_metric("Top Pickup Location", top_pickup_location, "Most frequent pickup location for trips.")
-        pdf.add_metric("Top Dropoff Location", top_dropoff_location, "Most frequent dropoff location for trips.")
-        pdf.add_metric("Peak Hour", peak_hour, "Hour of the day with the highest number of trips.")
-        pdf.add_metric("Primary Payment Method", primary_payment_method, "Most commonly used payment method by customers.")
+        pdf.add_metric("Top Pickup Location", top_pickup_location, 
+                       "Most frequent pickup location, indicating demand hotspots. Allocate more drivers or target promotions in these areas to meet demand.")
+        pdf.add_metric("Top Dropoff Location", top_dropoff_location, 
+                       "Most frequent dropoff location, reflecting travel patterns. Explore partnerships (e.g., with businesses) or optimize routes for these destinations.")
+        pdf.add_metric("Peak Hour", peak_hour, 
+                       "Hour with the most trips, showing peak demand. Schedule drivers or implement surge pricing to balance supply during these times.")
+        pdf.add_metric("Primary Payment Method", primary_payment_method, 
+                       "Most common payment method, reflecting user preferences. Invest in payment infrastructure or promote digital payments if cash dominates.")
 
         return pdf
     except Exception as e:
