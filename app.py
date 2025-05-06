@@ -619,7 +619,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
             def header(self):
                 # Add logo
                 try:
-                    self.image(r"./TUTU.png", x=10, y=8, w=30)
+                    self.image(r"./TUTU.png", x=10, y=8, w=25)
                 except Exception as e:
                     self.set_font('Arial', 'I', 8)
                     self.cell(0, 10, f'Could not load logo: {str(e)}', 0, 1, 'L')
