@@ -63,8 +63,10 @@ def extract_ugx_amount(value):
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
         amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
         if amounts:
+            if '-' in value_str:
+                return -float(amounts[0])
             return float(amounts[0])
-        if value_str.replace('.', '').isdigit():
+        if value_str.replace('.', '').replace('-', '').isdigit():
             return float(value_str)
         return 0.0
     except (ValueError, TypeError):
@@ -176,17 +178,15 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns:
-            valid_balances = df_drivers['Wallet Balance'].notna() & df_drivers['Wallet Balance'].apply(lambda x: isinstance(x, (int, float)))
-            total_valid = valid_balances.sum()
-            if total_valid == 0:
-                st.warning("No valid numeric Wallet Balance data found.")
-                return riders_onboarded, 0.0, 0.0
+            # Ensure Wallet Balance is numeric after extraction
+            df_drivers['Wallet Balance'] = pd.to_numeric(df_drivers['Wallet Balance'], errors='coerce').fillna(0.0)
             
-            positive_balances = df_drivers[valid_balances & (df_drivers['Wallet Balance'] > 0)]['Wallet Balance']
-            driver_wallet_balance = float(positive_balances.sum())
+            # Filter positive and negative balances
+            positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance']
+            driver_wallet_balance = float(positive_balances.sum()) if not positive_balances.empty else 0.0
             
-            negative_balances = df_drivers[valid_balances & (df_drivers['Wallet Balance'] < 0)]['Wallet Balance']
-            commission_owed = float(negative_balances.abs().sum())
+            negative_balances = df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance']
+            commission_owed = float(negative_balances.abs().sum()) if not negative_balances.empty else 0.0
             
             st.info(f"Processed {len(positive_balances)} positive and {len(negative_balances)} negative wallet balances.")
         else:
