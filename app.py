@@ -926,7 +926,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         return PDF()
 
 def main():
-    def main():
     st.image(r"./TUTU.png", width=100)
     st.markdown("<h1>Union App Metrics Dashboard</h1>", unsafe_allow_html=True)
     st.markdown("""
