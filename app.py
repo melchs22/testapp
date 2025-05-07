@@ -117,7 +117,7 @@ def load_transactions_data():
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
-            transactions_df['Pay Mode'] JJ= 'Unknown'
+            transactions_df['Pay Mode'] = 'Unknown'
             
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
