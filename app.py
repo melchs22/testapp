@@ -3,15 +3,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import pydeck as pdk
 import requests
 import os
 import re
 from dotenv import load_dotenv
 import io
 from fpdf import FPDF
-import base64
-import uuid
 
 # Load environment variables
 load_dotenv()
@@ -24,30 +21,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Custom CSS for the dashboard
-st.markdown("""
-<style>
-    .main {
-        background-color: #f8f9fa;
-    }
-    .stMetric {
-        background-color: white;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .stMetric label, .stMetric div {
-        color: black !important;
-    }
-    .stPlotlyChart, .stPydeckChart {
-        background-color: white;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
 
 PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
 DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
@@ -178,10 +151,8 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns:
-            # Ensure Wallet Balance is numeric after extraction
             df_drivers['Wallet Balance'] = pd.to_numeric(df_drivers['Wallet Balance'], errors='coerce').fillna(0.0)
             
-            # Filter positive and negative balances
             positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance']
             driver_wallet_balance = float(positive_balances.sum()) if not positive_balances.empty else 0.0
             
@@ -295,13 +266,17 @@ def revenue_by_day(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Trip Date' not in df.columns:
             return
-        daily_revenue = df.groupby(df['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum()
+        daily_revenue = df.groupby(df['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum().reset_index()
+        daily_revenue['Trip Date'] = daily_revenue['Trip Date'].astype(str)  # Ensure Trip Date is string for animation
         fig = px.line(
-            x=daily_revenue.index,
-            y=daily_revenue.values,
+            daily_revenue,
+            x='Trip Date',
+            y='Trip Pay Amount Cleaned',
             title="Daily Revenue Trend",
-            labels={'x': 'Date', 'y': 'Revenue (UGX)'}
+            labels={'Trip Date': 'Date', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'},
+            animation_frame='Trip Date'  # Add animation
         )
+        fig.update_traces(mode='lines+markers')
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error in revenue by day: {str(e)}")
@@ -647,68 +622,56 @@ def get_download_data(df, date_range):
         if df.empty or 'Trip Date' not in df.columns:
             return pd.DataFrame()
 
-        # Define the date range
         start_date = date_range[0]
         end_date = date_range[1]
         date_list = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
 
-        # Calculate daily metrics
         daily_data = pd.DataFrame(index=date_list)
         daily_data.index.name = 'Date'
 
-        # Total Value of Rides (sum of Trip Pay Amount Cleaned for completed trips)
         if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             daily_value = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum()
             for date in date_list:
                 daily_data.loc[date, 'Total Value of Rides (local currency)'] = daily_value.get(date, 0.0)
 
-        # Total Rider Subscriptions Made per Day (placeholder, assuming no subscription data; set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'Total Rider Subscriptions Made per Day'] = 0  # Replace with actual data if available
+            daily_data.loc[date, 'Total Rider Subscriptions Made per Day'] = 0
 
-        # Total Rider Commissions Made per Day
         if 'Company Commission Cleaned' in df.columns:
             daily_commissions = df.groupby(df['Trip Date'].dt.date)['Company Commission Cleaned'].sum()
             for date in date_list:
                 daily_data.loc[date, 'Total Rider Commissions Made per Day'] = daily_commissions.get(date, 0.0)
 
-        # Total # of Rides Completed per Day
         if 'Trip Status' in df.columns:
             completed_counts = df[df['Trip Status'] == 'Job Completed'].groupby(df['Trip Date'].dt.date).size()
             for date in date_list:
                 daily_data.loc[date, 'Total # of Rides Completed per Day'] = completed_counts.get(date, 0)
 
-        # Total Requests
         total_requests = df.groupby(df['Trip Date'].dt.date).size()
         for date in date_list:
             daily_data.loc[date, 'Total Requests'] = total_requests.get(date, 0)
 
-        # Average Trip Distance (km)
         if 'Distance' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             daily_distance = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Distance'].mean()
             for date in date_list:
                 daily_data.loc[date, 'Average Trip Distance (km)'] = daily_distance.get(date, 0.0)
 
-        # Average Trip Time (minutes) - Placeholder (assuming no time data; set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'Average Trip Time (minutes)'] = 0  # Replace with actual trip time data if available
+            daily_data.loc[date, 'Average Trip Time (minutes)'] = 0
 
-        # Completion Rate (ungrouped)
         if 'Trip Status' in df.columns:
             daily_completion = df.groupby(df['Trip Date'].dt.date).apply(lambda x: calculate_cancellation_rate(x) if calculate_cancellation_rate(x) is not None else 0)
             for date in date_list:
                 daily_data.loc[date, 'Completion Rate (ungrouped)'] = 100 - daily_completion.get(date, 0.0) if not pd.isna(daily_completion.get(date, 0.0)) else 0.0
 
-        # Average Customer Price per Ride
         if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             daily_price = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].mean()
             for date in date_list:
                 daily_data.loc[date, 'Average Customer Price per Ride'] = daily_price.get(date, 0.0)
 
-        # Average Customer Price per Kilometer
         if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
@@ -716,55 +679,44 @@ def get_download_data(df, date_range):
             for date in date_list:
                 daily_data.loc[date, 'Average Customer Price per Kilometer'] = daily_fare_per_km.get(date, 0.0)
 
-        # Average Price per Kilometer (assuming same as above for now)
         for date in date_list:
             daily_data.loc[date, 'Average Price per Kilometer'] = daily_data.loc[date, 'Average Customer Price per Kilometer']
 
-        # Daily Active Drivers (unique drivers per day)
         if 'Driver' in df.columns:
             daily_drivers = df.groupby(df['Trip Date'].dt.date)['Driver'].nunique()
             for date in date_list:
                 daily_data.loc[date, 'Daily Active Drivers'] = daily_drivers.get(date, 0)
 
-        # First Time Active Riders (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'First Time Active Riders'] = 0  # Replace with actual data if available
+            daily_data.loc[date, 'First Time Active Riders'] = 0
 
-        # Total Cumulative Riders (unique passengers over time)
         if 'Passenger' in df.columns:
             cumulative_riders = df.groupby(df['Trip Date'].dt.date)['Passenger'].nunique().cumsum()
             for date in date_list:
                 daily_data.loc[date, 'Total Cumulative Riders'] = cumulative_riders.get(date, 0)
 
-        # % of Riders Engaged (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, '% of Riders Engaged'] = 0  # Replace with actual engagement data if available
+            daily_data.loc[date, '% of Riders Engaged'] = 0
 
-        # % of Suspended Riders (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, '% of Suspended Riders'] = 0  # Replace with actual suspension data if available
+            daily_data.loc[date, '% of Suspended Riders'] = 0
 
-        # Order per Rider (average trips per passenger per day)
         if 'Passenger' in df.columns:
             daily_orders = df.groupby([df['Trip Date'].dt.date, 'Passenger']).size().groupby(level=0).mean()
             for date in date_list:
                 daily_data.loc[date, 'Order per Rider'] = daily_orders.get(date, 0.0)
 
-        # Average Rider Earnings per Day (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'Average Rider Earnings per Day'] = 0  # Replace with actual earnings data if available
+            daily_data.loc[date, 'Average Rider Earnings per Day'] = 0
 
-        # Daily Online Riders (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'Daily Online Riders'] = 0  # Replace with actual online data if available
+            daily_data.loc[date, 'Daily Online Riders'] = 0
 
-        # Bike Riders Acceptance Rate (placeholder, set to 0 for now)
         for date in date_list:
-            daily_data.loc[date, 'Bike Riders Acceptance Rate'] = 0  # Replace with actual acceptance data if available
+            daily_data.loc[date, 'Bike Riders Acceptance Rate'] = 0
 
-        # Total Passenger app Downloads Per (assuming total downloads; no daily breakdown yet)
         for date in date_list:
-            daily_data.loc[date, 'Total Passenger app Downloads Per'] = 0  # Replace with actual download data if available
+            daily_data.loc[date, 'Total Passenger app Downloads Per'] = 0
 
         return daily_data.reset_index()
 
@@ -832,27 +784,27 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         total_commission = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
 
         pdf.add_metric("Total Requests", total_requests, 
-                       "Measures total demand for rides, including all trip requests. High volumes indicate strong user engagement. If completions are low relative to requests, consider onboarding more drivers or improving matching algorithms.")
+                       "Measures total demand for rides, including all trip requests.")
         pdf.add_metric("Completed Trips", completed_trips, 
-                       "Counts successful trips from pickup to dropoff, reflecting operational success. High completion rates suggest efficient service and customer satisfaction. Track trends to assess promotions or operational changes.")
+                       "Counts successful trips from pickup to dropoff.")
         pdf.add_metric("Average Distance", avg_distance, 
-                       "Average distance per trip, indicating trip length preferences. Longer trips may yield higher fares but strain driver availability. Adjust pricing or incentives if distances increase significantly.")
+                       "Average distance per trip.")
         pdf.add_metric("Driver Cancellation Rate", cancellation_rate_str, 
-                       "Percentage of trips cancelled by drivers, reflecting reliability. High rates may frustrate passengers and reduce revenue. Address with driver incentives or better trip assignments.")
+                       "Percentage of trips cancelled by drivers.")
         pdf.add_metric("Passenger Search Timeout", timeout_rate_str, 
-                       "Percentage of trips expiring due to no driver acceptance, indicating supply shortages. High timeouts suggest a need for more drivers or surge incentives in high-demand areas.")
+                       "Percentage of trips expiring due to no driver acceptance.")
         pdf.add_metric("Average Trips per Driver", avg_trips_per_driver, 
-                       "Mean trips per driver, measuring utilization. Low values suggest oversupply or low demand. Consider reducing onboarding or boosting passenger promotions if utilization is low.")
+                       "Mean trips per driver.")
         pdf.add_metric("Passenger App Downloads", int(app_downloads), 
-                       "Total app installations, reflecting market reach. High downloads with low trip activity may indicate onboarding issues. Improve user onboarding to convert downloads to active riders.")
+                       "Total app installations.")
         pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
-                       "Number of drivers registered, indicating supply. Over-onboarding may reduce earnings and cause churn. Compare to active drivers to assess recruitment efficiency.")
+                       "Number of drivers registered.")
         pdf.add_metric("Total Distance Covered", total_distance_covered, 
-                       "Sum of distances for completed trips, reflecting operational scale. High distance with low revenue may indicate inefficient pricing. Review fare structures if needed.")
+                       "Sum of distances for completed trips.")
         pdf.add_metric("Average Revenue per Trip", avg_revenue_per_trip, 
-                       "Mean revenue per trip, reflecting pricing effectiveness. Low values may signal underpricing or short trips. Adjust pricing or promote longer trips to boost revenue.")
+                       "Mean revenue per trip.")
         pdf.add_metric("Total Commission", total_commission, 
-                       "Sum of commissions earned, representing primary revenue. High commissions relative to revenue indicate a sustainable model. Increase trip volume or commission rates if low.")
+                       "Sum of commissions earned.")
 
         pdf.add_section_title("Financial Performance")
         total_revenue = f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else "N/A"
@@ -864,27 +816,27 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         revenue_share = f"{(df['Company Commission Cleaned'].sum() / df['Trip Pay Amount Cleaned'].sum() * 100):.1f}%" if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns and df['Trip Pay Amount Cleaned'].sum() > 0 else "N/A"
 
         pdf.add_metric("Total Value of Rides", total_revenue, 
-                       "Total revenue from completed trips, reflecting market value. Growth indicates successful expansion or pricing. Stimulate demand if revenue stagnates.")
+                       "Total revenue from completed trips.")
         pdf.add_metric("Total Commission", total_commission, 
-                       "Sum of commissions earned, the company's primary revenue. High commissions ensure profitability. Adjust rates or increase trips if commissions are low.")
+                       "Sum of commissions earned.")
         pdf.add_metric("Gross Profit", gross_profit, 
-                       "Total commission earned, reflecting profitability before expenses. Low profit may signal high discounts or low volume. Compare to costs for financial health.")
+                       "Total commission earned.")
         pdf.add_metric("Passenger Wallet Balance", f"{float(passenger_wallet_balance):,.0f} UGX", 
-                       "Total funds in passenger wallets, showing user commitment. High balances with low activity may require promotions to encourage usage.")
+                       "Total funds in passenger wallets.")
         pdf.add_metric("Driver Wallet Balance", f"{float(driver_wallet_balance):,.0f} UGX", 
-                       "Total positive balances owed to drivers, reflecting payout obligations. High balances may delay payouts, affecting satisfaction. Ensure timely settlements.")
+                       "Total positive balances owed to drivers.")
         pdf.add_metric("Commission Owed", f"{float(commission_owed):,.0f} UGX", 
-                       "Total negative driver balances, indicating commissions owed. High amounts may signal driver financial strain. Offer flexible repayment plans if needed.")
+                       "Total negative driver balances.")
         pdf.add_metric("Average Commission per Trip", avg_commission_per_trip, 
-                       "Mean commission per trip, balancing company revenue and driver earnings. Adjust rates if commissions are too high (driver churn) or too low (low revenue).")
+                       "Mean commission per trip.")
         pdf.add_metric("Average Revenue per Driver", avg_revenue_per_driver, 
-                       "Mean revenue per driver, reflecting productivity. Low values suggest oversupply or low demand. Boost demand or optimize driver allocation.")
+                       "Mean revenue per driver.")
         pdf.add_metric("Average Driver Earnings per Trip", driver_earnings_per_trip, 
-                       "Mean driver earnings after commission, critical for retention. Low earnings may cause churn. Reduce commissions or offer bonuses if earnings are low.")
+                       "Mean driver earnings after commission.")
         pdf.add_metric("Average Fare per KM", fare_per_km, 
-                       "Mean revenue per kilometer, reflecting pricing efficiency. Low fares may not cover driver costs. Adjust base fares or surge pricing if needed.")
+                       "Mean revenue per kilometer.")
         pdf.add_metric("Revenue Share", revenue_share, 
-                       "Percentage of revenue retained as commission, defining the revenue model. Balance to ensure profitability and driver motivation. Adjust if imbalanced.")
+                       "Percentage of revenue retained as commission.")
 
         pdf.add_section_title("User Performance")
         unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
@@ -893,17 +845,17 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         total_union_staff = len(pd.read_excel(UNION_STAFF_FILE_PATH).iloc[:, 0].dropna()) if os.path.exists(UNION_STAFF_FILE_PATH) else 0
 
         pdf.add_metric("Unique Drivers", unique_drivers, 
-                       "Number of distinct drivers completing trips, reflecting active supply. Low counts relative to onboarded drivers suggest retention issues. Implement re-engagement programs.")
+                       "Number of distinct drivers completing trips.")
         pdf.add_metric("Passenger App Downloads", int(app_downloads), 
-                       "Total app installations, indicating potential user base growth. High downloads with low activity signal onboarding issues. Enhance onboarding processes.")
+                       "Total app installations.")
         pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
-                       "Number of drivers registered, reflecting supply capacity. Over-onboarding may lead to low earnings and churn. Optimize recruitment based on demand.")
+                       "Number of drivers registered.")
         pdf.add_metric("Driver Retention Rate", retention_rate_str, 
-                       "Percentage of onboarded drivers who are active, measuring loyalty. Low retention increases recruitment costs. Improve earnings or policies to boost retention.")
+                       "Percentage of onboarded drivers who are active.")
         pdf.add_metric("Passenger-to-Driver Ratio", passenger_ratio_str, 
-                       "Number of passengers per active driver, showing supply-demand balance. High ratios may cause timeouts; low ratios reduce driver earnings. Adjust driver onboarding accordingly.")
+                       "Number of passengers per active driver.")
         pdf.add_metric("Total Union Staff Members", total_union_staff, 
-                       "Number of staff listed, potentially tracking internal usage. High staff rides may require cost allocation or discounted rates for internal transport.")
+                       "Number of staff listed.")
 
         pdf.add_section_title("Geographic Analysis")
         top_pickup_location = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
@@ -912,13 +864,13 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         primary_payment_method = df['Pay Mode'].value_counts().index[0] if 'Pay Mode' in df.columns and not df['Pay Mode'].value_counts().empty else "N/A"
 
         pdf.add_metric("Top Pickup Location", top_pickup_location, 
-                       "Most frequent pickup location, indicating demand hotspots. Allocate more drivers or target promotions in these areas to meet demand.")
+                       "Most frequent pickup location.")
         pdf.add_metric("Top Dropoff Location", top_dropoff_location, 
-                       "Most frequent dropoff location, reflecting travel patterns. Explore partnerships (e.g., with businesses) or optimize routes for these destinations.")
+                       "Most frequent dropoff location.")
         pdf.add_metric("Peak Hour", peak_hour, 
-                       "Hour with the most trips, showing peak demand. Schedule drivers or implement surge pricing to balance supply during these times.")
+                       "Hour with the most trips.")
         pdf.add_metric("Primary Payment Method", primary_payment_method, 
-                       "Most common payment method, reflecting user preferences. Invest in payment infrastructure or promote digital payments if cash dominates.")
+                       "Most common payment method.")
 
         return pdf
     except Exception as e:
@@ -1215,13 +1167,13 @@ def main():
             peak_hours(df)
             trip_status_trends(df)
             customer_payment_methods(df)
-            create_map(df)
 
     except FileNotFoundError:
         st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
     except Exception as e:
         st.error(f"Error: {e}")
 
+    # Feedback Section
     st.markdown("---")
     st.subheader("Provide Feedback")
     feedback = st.text_area("Your feedback helps us improve!")
