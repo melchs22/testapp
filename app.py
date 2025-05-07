@@ -117,7 +117,7 @@ def load_transactions_data():
             transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
         else:
             st.warning("No 'Pay Mode' column found in transactions data")
-            transactions_df['Pay Mode'] = 'Unknown'
+            transactions_df['Pay Mode'] JJ= 'Unknown'
             
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
@@ -179,11 +179,21 @@ def driver_metrics(df_drivers):
     try:
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns:
-            # Sum positive values for Driver Wallet Balance
-            driver_wallet_balance = float(df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum())
-            # Sum absolute of negative values for Commission Owed
-            commission_owed = float(df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].abs().sum())
+            valid_balances = df_drivers['Wallet Balance'].notna() & df_drivers['Wallet Balance'].apply(lambda x: isinstance(x, (int, float)))
+            total_valid = valid_balances.sum()
+            if total_valid == 0:
+                st.warning("No valid numeric Wallet Balance data found.")
+                return riders_onboarded, 0.0, 0.0
+            
+            positive_balances = df_drivers[valid_balances & (df_drivers['Wallet Balance'] > 0)]['Wallet Balance']
+            driver_wallet_balance = float(positive_balances.sum())
+            
+            negative_balances = df_drivers[valid_balances & (df_drivers['Wallet Balance'] < 0)]['Wallet Balance']
+            commission_owed = float(negative_balances.abs().sum())
+            
+            st.info(f"Processed {len(positive_balances)} positive and {len(negative_balances)} negative wallet balances.")
         else:
+            st.warning("No 'Wallet Balance' column found in drivers data.")
             driver_wallet_balance = 0.0
             commission_owed = 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
@@ -247,11 +257,13 @@ def completed_vs_cancelled_daily(df):
 def trips_per_driver(df):
     try:
         if 'Driver' not in df.columns:
-            st.metric("Trips per Driver", "N/A")
+            st.metric("Trips per Driver", "N/A",
+                      help="Average number of trips completed per driver (data unavailable).")
             return
         trips_by_driver = df.groupby('Driver').size()
         avg_trips = trips_by_driver.mean() if not trips_by_driver.empty else 0
-        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}")
+        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}",
+                  help="Average number of trips completed per driver.")
     except Exception as e:
         st.error(f"Error in trips per driver: {str(e)}")
 
@@ -272,10 +284,13 @@ def total_trips_by_status(df):
 def total_distance_covered(df):
     try:
         if 'Distance' not in df.columns or 'Trip Status' not in df.columns:
+            st.metric("Total Distance Covered", "N/A",
+                      help="Total distance covered by completed trips (data unavailable).")
             return
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         total_distance = completed_trips['Distance'].sum()
-        st.metric("Total Distance Covered", f"{total_distance:,.0f} km")
+        st.metric("Total Distance Covered", f"{total_distance:,.0f} km",
+                  help="Total distance covered by completed trips in kilometers.")
     except Exception as e:
         st.error(f"Error in total distance covered: {str(e)}")
 
@@ -297,79 +312,102 @@ def revenue_by_day(df):
 def avg_revenue_per_trip(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns:
+            st.metric("Avg. Revenue per Trip", "N/A",
+                      help="Average revenue generated per trip (data unavailable).")
             return
         avg_revenue = df['Trip Pay Amount Cleaned'].mean()
-        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX")
+        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX",
+                  help="Average revenue generated per trip in UGX.")
     except Exception as e:
         st.error(f"Error in avg revenue per trip: {str(e)}")
 
 def total_commission(df):
     try:
         if 'Company Commission Cleaned' not in df.columns:
-            st.metric("Total Commission", "N/A")
+            st.metric("Total Commission", "N/A",
+                      help="Total commission earned by the company (data unavailable).")
             return
         total_comm = df['Company Commission Cleaned'].sum()
-        st.metric("Total Commission", f"{total_comm:,.0f} UGX")
+        st.metric("Total Commission", f"{total_comm:,.0f} UGX",
+                  help="Total commission earned by the company from trips.")
     except Exception as e:
         st.error(f"Error in total commission: {str(e)}")
 
 def gross_profit(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
+            st.metric("Gross Profit", "N/A",
+                      help="Total commission earned, representing profit before expenses (data unavailable).")
             return
         gross_profit = df['Company Commission Cleaned'].sum()
-        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX")
+        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX",
+                  help="Total commission earned, representing profit before expenses.")
     except Exception as e:
         st.error(f"Error in gross profit: {str(e)}")
 
 def avg_commission_per_trip(df):
     try:
         if 'Company Commission Cleaned' not in df.columns:
+            st.metric("Avg. Commission per Trip", "N/A",
+                      help="Average commission earned per trip (data unavailable).")
             return
         avg_comm = df['Company Commission Cleaned'].mean()
-        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX")
+        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX",
+                  help="Average commission earned per trip in UGX.")
     except Exception as e:
         st.error(f"Error in avg commission per trip: {str(e)}")
 
 def revenue_per_driver(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
+            st.metric("Avg. Revenue per Driver", "N/A",
+                      help="Average revenue generated per driver (data unavailable).")
             return
         revenue_by_driver = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum()
         avg_revenue = revenue_by_driver.mean() if not revenue_by_driver.empty else 0
-        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX")
+        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX",
+                  help="Average revenue generated per driver in UGX.")
     except Exception as e:
         st.error(f"Error in revenue per driver: {str(e)}")
 
 def driver_earnings_per_trip(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
+            st.metric("Avg. Driver Earnings per Trip", "N/A",
+                      help="Average earnings per trip for drivers after commission (data unavailable).")
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
         avg_earnings = df['Driver Earnings'].mean()
-        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX")
+        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX",
+                  help="Average earnings per trip for drivers after commission in UGX.")
     except Exception as e:
         st.error(f"Error in driver earnings per trip: {str(e)}")
 
 def fare_per_km(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Distance' not in df.columns or 'Trip Status' not in df.columns:
+            st.metric("Avg. Fare per KM", "N/A",
+                      help="Average revenue per kilometer for completed trips (data unavailable).")
             return
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
         avg_fare_per_km = completed_trips['Fare per KM'].mean()
-        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX")
+        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX",
+                  help="Average revenue per kilometer for completed trips in UGX.")
     except Exception as e:
         st.error(f"Error in fare per km: {str(e)}")
 
 def revenue_share(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
+            st.metric("Revenue Share", "N/A",
+                      help="Percentage of revenue retained as commission (data unavailable).")
             return
         total_revenue = df['Trip Pay Amount Cleaned'].sum()
         total_commission = df['Company Commission Cleaned'].sum()
         revenue_share = (total_commission / total_revenue * 100) if total_revenue > 0 else 0
-        st.metric("Revenue Share", f"{revenue_share:.1f}%")
+        st.metric("Revenue Share", f"{revenue_share:.1f}%",
+                  help="Percentage of revenue retained as commission.")
     except Exception as e:
         st.error(f"Error in revenue share: {str(e)}")
 
@@ -435,9 +473,12 @@ def weekday_vs_weekend_analysis(df):
 def unique_driver_count(df):
     try:
         if 'Driver' not in df.columns:
+            st.metric("Unique Drivers", "N/A",
+                      help="Number of distinct drivers who completed trips (data unavailable).")
             return
         unique_drivers = df['Driver'].nunique()
-        st.metric("Unique Drivers", unique_drivers)
+        st.metric("Unique Drivers", unique_drivers,
+                  help="Number of distinct drivers who completed trips.")
     except Exception as e:
         st.error(f"Error in unique driver count: {str(e)}")
 
@@ -617,13 +658,11 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     try:
         class PDF(FPDF):
             def header(self):
-                # Add logo
                 try:
                     self.image(r"./TUTU.png", x=5, y=4, w=19)
                 except Exception as e:
                     self.set_font('Arial', 'I', 8)
                     self.cell(0, 10, f'Could not load logo: {str(e)}', 0, 1, 'L')
-                # Title
                 self.set_font('Arial', 'B', 12)
                 self.cell(0, 10, 'Union App Metrics Report', 0, 1, 'C')
                 self.ln(5)
@@ -649,7 +688,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        # Date Range (Centered)
         start_date_str = 'N/A'
         end_date_str = 'N/A'
         if date_range and len(date_range) == 2:
@@ -662,7 +700,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1, 'C')
         pdf.ln(5)
 
-        # Overview Metrics
         pdf.add_section_title("Trips Overview")
         total_requests = int(len(df))
         completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
@@ -699,7 +736,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_metric("Total Commission", total_commission, 
                        "Sum of commissions earned, representing primary revenue. High commissions relative to revenue indicate a sustainable model. Increase trip volume or commission rates if low.")
 
-        # Financial Metrics
         pdf.add_section_title("Financial Performance")
         total_revenue = f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else "N/A"
         gross_profit = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
@@ -732,7 +768,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_metric("Revenue Share", revenue_share, 
                        "Percentage of revenue retained as commission, defining the revenue model. Balance to ensure profitability and driver motivation. Adjust if imbalanced.")
 
-        # User Analysis Metrics
         pdf.add_section_title("User Performance")
         unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
         retention_rate_str = f"{float(retention_rate):.1f}%" if retention_rate is not None else "N/A"
@@ -752,7 +787,6 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_metric("Total Union Staff Members", total_union_staff, 
                        "Number of staff listed, potentially tracking internal usage. High staff rides may require cost allocation or discounted rates for internal transport.")
 
-        # Geographic Analysis Metrics
         pdf.add_section_title("Geographic Analysis")
         top_pickup_location = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
         top_dropoff_location = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and not df['Dropoff Location'].value_counts().empty else "N/A"
@@ -772,6 +806,7 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
     except Exception as e:
         st.error(f"Error in create metrics pdf: {str(e)}")
         return PDF()
+
 def main():
     st.title("Union App Metrics Dashboard")
 
@@ -850,24 +885,31 @@ def main():
 
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("Total Requests", len(df))
+                st.metric("Total Requests", len(df),
+                          help="Total number of trip requests, including completed, cancelled, and expired trips.")
             with col2:
                 completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
-                st.metric("Completed Trips", completed_trips)
+                st.metric("Completed Trips", completed_trips,
+                          help="Number of trips successfully completed from pickup to dropoff.")
             with col3:
-                st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A")
+                st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A",
+                          help="Average distance per trip in kilometers, based on completed trips.")
             with col4:
                 cancellation_rate = calculate_cancellation_rate(df)
                 if cancellation_rate is not None:
-                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%")
+                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%",
+                              help="Percentage of trips cancelled by drivers, indicating driver reliability.")
                 else:
-                    st.metric("Driver Cancellation Rate", "N/A")
+                    st.metric("Driver Cancellation Rate", "N/A",
+                              help="Percentage of trips cancelled by drivers (data unavailable).")
             with col5:
                 timeout_rate = calculate_passenger_search_timeout(df)
                 if timeout_rate is not None:
-                    st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%")
+                    st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%",
+                              help="Percentage of trips that expired due to no driver acceptance.")
                 else:
-                    st.metric("Passenger Search Timeout", "N/A")
+                    st.metric("Passenger Search Timeout", "N/A",
+                              help="Percentage of trips that expired due to no driver acceptance (data unavailable).")
 
             status_breakdown_fig = completed_vs_cancelled_daily(df)
             if status_breakdown_fig:
@@ -879,9 +921,11 @@ def main():
             with col6:
                 trips_per_driver(df)
             with col7:
-                st.metric("Passenger App Downloads", app_downloads)
+                st.metric("Passenger App Downloads", app_downloads,
+                          help="Total number of passenger app installations.")
             with col8:
-                st.metric("Riders Onboarded", riders_onboarded)
+                st.metric("Riders Onboarded", riders_onboarded,
+                          help="Total number of drivers registered on the platform.")
 
             total_trips_by_status(df)
             total_distance_covered(df)
@@ -895,7 +939,8 @@ def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()
-                st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX")
+                st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX",
+                          help="Total revenue generated from completed trips.")
             with col2:
                 total_commission(df)
             with col3:
@@ -903,11 +948,14 @@ def main():
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX")
+                st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX",
+                          help="Total funds held in passenger wallet accounts.")
             with col5:
-                st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX")
+                st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX",
+                          help="Total positive balances owed to drivers.")
             with col6:
-                st.metric("Commission Owed", f"{commission_owed:,.0f} UGX")
+                st.metric("Commission Owed", f"{commission_owed:,.0f} UGX",
+                          help="Total negative balances, representing commissions owed by drivers.")
 
             col7, col8, col9 = st.columns(3)
             with col7:
@@ -935,17 +983,19 @@ def main():
             with col1:
                 unique_driver_count(df)
             with col2:
-                st.metric("Passenger App Downloads", app_downloads)
+                st.metric("Passenger App Downloads", app_downloads,
+                          help="Total number of passenger app installations.")
             with col3:
-                st.metric("Riders Onboarded", riders_onboarded)
+                st.metric("Riders Onboarded", riders_onboarded,
+                          help="Total number of drivers registered on the platform.")
 
             col4, col5 = st.columns(2)
             with col4:
                 st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
-                          help="Percentage of onboarded riders who are active drivers")
+                          help="Percentage of onboarded drivers who are active, indicating driver loyalty.")
             with col5:
                 st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
-                          help="Number of passengers per active driver")
+                          help="Number of passengers per active driver, showing supply-demand balance.")
 
             top_drivers_by_revenue(df)
             driver_performance_comparison(df)
@@ -962,8 +1012,8 @@ def main():
                         st.warning("Union Staff file is empty or does not contain columns.")
                     else:
                         union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
-                        st.metric("Total Union's Staff Members", len(union_staff_names))
-
+                        st.metric("Total Union's Staff Members", len(union_staff_names),
+                                  help="Total number of Union staff members listed in the staff file.")
                         staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
                         if not staff_trips_df.empty:
                             st.dataframe(staff_trips_df)
@@ -971,7 +1021,6 @@ def main():
                             st.info("No matching completed trips found for Union Staff members.")
                 else:
                     st.info(f"Union Staff file not found at: {UNION_STAFF_FILE_PATH}")
-
             except Exception as e:
                 st.error(f"Error processing Union Staff file: {e}")
 
