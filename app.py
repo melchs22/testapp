@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import requests
 import os
 import re
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 import io
 from fpdf import FPDF
@@ -1160,7 +1161,7 @@ def main():
             except Exception as e:
                 st.error(f"Error processing Union Staff file: {e}")
 
-        with tab4:
+              with tab4:
             st.header("Geographic Analysis")
             st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             most_frequent_locations(df)
@@ -1176,9 +1177,13 @@ def main():
     # Feedback Section
     st.markdown("---")
     st.subheader("Provide Feedback")
-    feedback = st.text_area("Your feedback helps us improve!")
-    if st.button("Submit Feedback"):
-        st.success("Thank you for your feedback!")
+    st.write("Please provide your feedback below:")
+
+    # Embed the Google Form using the iframe code
+    form_iframe = """
+    <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSeM3Y8mvr74nh-g-UkEN9jNmqz7IcdLoTI2yG1sT1tlS46hVQ/viewform?embedded=true" width="500" height="450" frameborder="0" marginheight="0" marginwidth="0">Loading…</iframe>
+    """
+    components.html(form_iframe, height=450)
 
 if __name__ == "__main__":
     if not os.path.exists("data"):
