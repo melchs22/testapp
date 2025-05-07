@@ -185,10 +185,8 @@ def driver_metrics(df_drivers):
             positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance']
             driver_wallet_balance = float(positive_balances.sum()) if not positive_balances.empty else 0.0
             
-           negative_balances_mask = df_drivers['Wallet Balance'] < 0
-        negative_balances_count = negative_balances_mask.sum()  # Count how many rows have negative balances
-        negative_balances = df_drivers[negative_balances_mask]['Wallet Balance']
-        commission_owed = float(abs(negative_balances.sum())) if negative_balances_count > 0 else 0.0
+          negative_balances = df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance']
+commission_owed = float(negative_balances.abs().sum()) if not negative_balances.empty else 0.0
             
             st.info(f"Processed {len(positive_balances)} positive and {len(negative_balances)} negative wallet balances.")
         else:
