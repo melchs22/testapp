@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import pydeck as pdk
 import requests
 import os
@@ -60,13 +60,10 @@ def extract_ugx_amount(value):
     try:
         if pd.isna(value) or value is None:
             return 0.0
-        # Convert to string and clean
         value_str = str(value).replace('UGX', '').replace(',', '').strip()
-        # Extract numeric part using regex
         amounts = re.findall(r'[\d]+(?:\.\d+)?', value_str)
         if amounts:
             return float(amounts[0])
-        # Try direct conversion if it's a numeric string
         if value_str.replace('.', '').isdigit():
             return float(value_str)
         return 0.0
@@ -257,7 +254,7 @@ def completed_vs_cancelled_daily(df):
 def trips_per_driver(df):
     try:
         if 'Driver' not in df.columns:
-            st.metric("Trips per Driver", "N/A",
+            st.metric("Avg. Trips per Driver", "N/A",
                       help="Average number of trips completed per driver (data unavailable).")
             return
         trips_by_driver = df.groupby('Driver').size()
@@ -645,11 +642,132 @@ def customer_payment_methods(df):
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
 
-def get_download_data(df):
+def get_download_data(df, date_range):
     try:
-        download_df = df[['Trip Date', 'Trip Status', 'Driver', 'Passenger', 'Trip Pay Amount Cleaned', 'Company Commission Cleaned', 'Distance', 'Pay Mode']].copy()
-        download_df['Trip Date'] = download_df['Trip Date'].dt.strftime('%Y-%m-%d')
-        return download_df
+        if df.empty or 'Trip Date' not in df.columns:
+            return pd.DataFrame()
+
+        # Define the date range
+        start_date = date_range[0]
+        end_date = date_range[1]
+        date_list = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
+
+        # Calculate daily metrics
+        daily_data = pd.DataFrame(index=date_list)
+        daily_data.index.name = 'Date'
+
+        # Total Value of Rides (sum of Trip Pay Amount Cleaned for completed trips)
+        if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns:
+            completed_trips = df[df['Trip Status'] == 'Job Completed']
+            daily_value = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum()
+            for date in date_list:
+                daily_data.loc[date, 'Total Value of Rides (local currency)'] = daily_value.get(date, 0.0)
+
+        # Total Rider Subscriptions Made per Day (placeholder, assuming no subscription data; set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'Total Rider Subscriptions Made per Day'] = 0  # Replace with actual data if available
+
+        # Total Rider Commissions Made per Day
+        if 'Company Commission Cleaned' in df.columns:
+            daily_commissions = df.groupby(df['Trip Date'].dt.date)['Company Commission Cleaned'].sum()
+            for date in date_list:
+                daily_data.loc[date, 'Total Rider Commissions Made per Day'] = daily_commissions.get(date, 0.0)
+
+        # Total # of Rides Completed per Day
+        if 'Trip Status' in df.columns:
+            completed_counts = df[df['Trip Status'] == 'Job Completed'].groupby(df['Trip Date'].dt.date).size()
+            for date in date_list:
+                daily_data.loc[date, 'Total # of Rides Completed per Day'] = completed_counts.get(date, 0)
+
+        # Total Requests
+        total_requests = df.groupby(df['Trip Date'].dt.date).size()
+        for date in date_list:
+            daily_data.loc[date, 'Total Requests'] = total_requests.get(date, 0)
+
+        # Average Trip Distance (km)
+        if 'Distance' in df.columns and 'Trip Status' in df.columns:
+            completed_trips = df[df['Trip Status'] == 'Job Completed']
+            daily_distance = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Distance'].mean()
+            for date in date_list:
+                daily_data.loc[date, 'Average Trip Distance (km)'] = daily_distance.get(date, 0.0)
+
+        # Average Trip Time (minutes) - Placeholder (assuming no time data; set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'Average Trip Time (minutes)'] = 0  # Replace with actual trip time data if available
+
+        # Completion Rate (ungrouped)
+        if 'Trip Status' in df.columns:
+            daily_completion = df.groupby(df['Trip Date'].dt.date).apply(lambda x: calculate_cancellation_rate(x) if calculate_cancellation_rate(x) is not None else 0)
+            for date in date_list:
+                daily_data.loc[date, 'Completion Rate (ungrouped)'] = 100 - daily_completion.get(date, 0.0) if not pd.isna(daily_completion.get(date, 0.0)) else 0.0
+
+        # Average Customer Price per Ride
+        if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns:
+            completed_trips = df[df['Trip Status'] == 'Job Completed']
+            daily_price = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].mean()
+            for date in date_list:
+                daily_data.loc[date, 'Average Customer Price per Ride'] = daily_price.get(date, 0.0)
+
+        # Average Customer Price per Kilometer
+        if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns:
+            completed_trips = df[df['Trip Status'] == 'Job Completed']
+            completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
+            daily_fare_per_km = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Fare per KM'].mean()
+            for date in date_list:
+                daily_data.loc[date, 'Average Customer Price per Kilometer'] = daily_fare_per_km.get(date, 0.0)
+
+        # Average Price per Kilometer (assuming same as above for now)
+        for date in date_list:
+            daily_data.loc[date, 'Average Price per Kilometer'] = daily_data.loc[date, 'Average Customer Price per Kilometer']
+
+        # Daily Active Drivers (unique drivers per day)
+        if 'Driver' in df.columns:
+            daily_drivers = df.groupby(df['Trip Date'].dt.date)['Driver'].nunique()
+            for date in date_list:
+                daily_data.loc[date, 'Daily Active Drivers'] = daily_drivers.get(date, 0)
+
+        # First Time Active Riders (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'First Time Active Riders'] = 0  # Replace with actual data if available
+
+        # Total Cumulative Riders (unique passengers over time)
+        if 'Passenger' in df.columns:
+            cumulative_riders = df.groupby(df['Trip Date'].dt.date)['Passenger'].nunique().cumsum()
+            for date in date_list:
+                daily_data.loc[date, 'Total Cumulative Riders'] = cumulative_riders.get(date, 0)
+
+        # % of Riders Engaged (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, '% of Riders Engaged'] = 0  # Replace with actual engagement data if available
+
+        # % of Suspended Riders (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, '% of Suspended Riders'] = 0  # Replace with actual suspension data if available
+
+        # Order per Rider (average trips per passenger per day)
+        if 'Passenger' in df.columns:
+            daily_orders = df.groupby([df['Trip Date'].dt.date, 'Passenger']).size().groupby(level=0).mean()
+            for date in date_list:
+                daily_data.loc[date, 'Order per Rider'] = daily_orders.get(date, 0.0)
+
+        # Average Rider Earnings per Day (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'Average Rider Earnings per Day'] = 0  # Replace with actual earnings data if available
+
+        # Daily Online Riders (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'Daily Online Riders'] = 0  # Replace with actual online data if available
+
+        # Bike Riders Acceptance Rate (placeholder, set to 0 for now)
+        for date in date_list:
+            daily_data.loc[date, 'Bike Riders Acceptance Rate'] = 0  # Replace with actual acceptance data if available
+
+        # Total Passenger app Downloads Per (assuming total downloads; no daily breakdown yet)
+        for date in date_list:
+            daily_data.loc[date, 'Total Passenger app Downloads Per'] = 0  # Replace with actual download data if available
+
+        return daily_data.reset_index()
+
     except Exception as e:
         st.error(f"Error in get download data: {str(e)}")
         return pd.DataFrame()
@@ -859,7 +977,7 @@ def main():
         st.sidebar.subheader("Export Data")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            get_download_data(df).to_excel(writer, sheet_name='Dashboard Data', index=False)
+            get_download_data(df, date_range).to_excel(writer, sheet_name='Daily Metrics', index=True)
         excel_data = output.getvalue()
         st.sidebar.download_button(
             label="📊 Download Full Data (Excel)",
