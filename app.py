@@ -176,35 +176,27 @@ def passenger_metrics(df_passengers):
 
 def driver_metrics(df_drivers):
     try:
-        # Ensure 'Wallet Balance' column exists and is numeric
-        if 'Wallet Balance' not in df_drivers.columns:
-            st.warning("Wallet Balance column not found in driver data.")
-            return 0, 0, 0
-
-        # Convert to numeric, forcing errors to NaN, then fill NaN with 0
-        df_drivers['Wallet Balance'] = pd.to_numeric(df_drivers['Wallet Balance'], errors='coerce').fillna(0)
-
-        # Count unique drivers (riders onboarded)
-        riders_onboarded = df_drivers['Driver'].nunique() if 'Driver' in df_drivers.columns else 0
-
-        # Separate positive and negative balances
-        positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance'].sum()
-        negative_balances = df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance'].sum()
-
-        # Driver wallet balance (sum of positive balances)
-        driver_wallet_balance = positive_balances if positive_balances > 0 else 0
-
-        # Commission owed (absolute value of sum of negative balances, since negatives represent owed amounts)
-        commission_owed = abs(negative_balances) if negative_balances < 0 else 0
-
-        # Debug print to verify processing
-        print(f"Processed {len(df_drivers[df_drivers['Wallet Balance'] > 0])} positive and {len(df_drivers[df_drivers['Wallet Balance'] < 0])} negative wallet balances.")
-
+        riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
+        if 'Wallet Balance' in df_drivers.columns:
+            # Ensure Wallet Balance is numeric after extraction
+            df_drivers['Wallet Balance'] = pd.to_numeric(df_drivers['Wallet Balance'], errors='coerce').fillna(0.0)
+            
+            # Filter positive and negative balances
+            positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance']
+            driver_wallet_balance = float(positive_balances.sum()) if not positive_balances.empty else 0.0
+            
+            negative_balances = df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance']
+            commission_owed = float(negative_balances.abs().sum()) if not negative_balances.empty else 0.0
+            
+            st.info(f"Processed {len(positive_balances)} positive and {len(negative_balances)} negative wallet balances.")
+        else:
+            st.warning("No 'Wallet Balance' column found in drivers data.")
+            driver_wallet_balance = 0.0
+            commission_owed = 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
-
     except Exception as e:
-        st.error(f"Error in driver_metrics: {str(e)}")
-        return 0, 0, 0
+        st.error(f"Error in driver metrics: {str(e)}")
+        return 0, 0.0, 0.0
 
 def calculate_driver_retention_rate(riders_onboarded, app_downloads, unique_drivers):
     try:
