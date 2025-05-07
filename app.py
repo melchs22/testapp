@@ -1161,7 +1161,7 @@ def main():
             except Exception as e:
                 st.error(f"Error processing Union Staff file: {e}")
 
-              with tab4:
+                     with tab4:
             st.header("Geographic Analysis")
             st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             most_frequent_locations(df)
@@ -1169,10 +1169,10 @@ def main():
             trip_status_trends(df)
             customer_payment_methods(df)
 
-         except FileNotFoundError:
+    except FileNotFoundError:
         st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
-        except Exception as e:
-                             st.error(f"Error: {e}")
+    except Exception as e:
+        st.error(f"Error: {e}")
 
     # Feedback Section
     st.markdown("---")
@@ -1184,8 +1184,3 @@ def main():
     <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSeM3Y8mvr74nh-g-UkEN9jNmqz7IcdLoTI2yG1sT1tlS46hVQ/viewform?embedded=true" width="500" height="450" frameborder="0" marginheight="0" marginwidth="0">Loading…</iframe>
     """
     components.html(form_iframe, height=450)
-
-if __name__ == "__main__":
-    if not os.path.exists("data"):
-        os.makedirs("data")
-    main()
