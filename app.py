@@ -926,103 +926,51 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         return PDF()
 
 def main():
-    st.image(r"./TUTU.png", width=80)  # Reduced from 100
+    st.image(r"./TUTU.png", width=80)
     st.markdown("<h1>Union App Metrics Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("""
+    
+    # Theme switcher
+    theme = st.sidebar.radio("Theme", ["Light", "Dark"], index=0)
+    theme_css = """
     <style>
-        .main {
-            background-color: #f0f4f8;
-            color: #333333;
-        }
-        .stMetric {
-            background: linear-gradient(135deg, #ffffff, #e6f0fa);
-            border-radius: 6px; /* Reduced from 8px */
-            padding: 5px; /* Reduced from 8px */
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); /* Reduced shadow further */
-            border-left: 2px solid #4a90e2; /* Reduced from 3px */
-            position: relative;
-            padding-left: 20px; /* Reduced from 30px */
-            height: 45px; /* Reduced from 60px */
-            width: 100%;
-            display: flex;
-            align-items: center;
-        }
-        .stMetric:before {
-            content: url('path/to/icon.png');
-            position: absolute;
-            left: 5px; /* Reduced from 8px */
-            top: 50%;
-            transform: translateY(-50%);
-            width: 12px; /* Reduced from 16px */
-            height: 12px; /* Reduced from 16px */
-        }
-        .stMetric label, .stMetric div {
-            color: #333333 !important;
-            font-size: 0.75em; /* Reduced from 0.9em for label */
-            margin: 0;
-        }
-        .stMetric div {
-            font-size: 1em; /* Reduced from 1.2em for value */
-            font-weight: 600;
-        }
-        .stPlotlyChart, .stPydeckChart {
-            background-color: #ffffff;
-            border-radius: 6px; /* Reduced from 8px */
-            padding: 8px; /* Reduced from 10px */
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); /* Reduced shadow */
-            border-left: 2px solid #50c878; /* Reduced from 3px */
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            background-color: #e6f0fa;
-            border-radius: 4px; /* Reduced from 5px */
-        }
-        .stTabs [data-baseweb="tab"] {
-            background-color: #e6f0fa;
-            color: #333333;
-            padding: 6px 12px; /* Reduced from 8px 16px */
-            transition: all 0.3s;
-        }
-        .stTabs [data-baseweb="tab"]:hover {
-            background-color: #4a90e2;
-            color: white;
-        }
-        .stTabs [data-baseweb="tab--selected"] {
-            background-color: #4a90e2;
-            color: white;
-            border-radius: 4px; /* Reduced from 5px */
-        }
-        body, .stApp {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        h1 {
-            font-size: 1.8em; /* Reduced from 2em */
-            color: #4a90e2;
-            font-weight: 600;
-            text-align: center;
-        }
-        h2 {
-            font-size: 1.3em; /* Reduced from 1.5em */
-            color: #333333;
-            font-weight: 500;
-            margin-bottom: 6px; /* Reduced from 8px */
-        }
-        @media (max-width: 768px) {
-            .stColumns > div {
-                width: 100% !important;
-                margin-bottom: 6px; /* Reduced from 8px */
-            }
-            h1 {
-                font-size: 1.5em; /* Reduced from 1.8em */
-            }
-            h2 {
-                font-size: 1.1em; /* Reduced from 1.3em */
-            }
-        }
+        .main { background-color: #f0f4f8; color: #333333; }
+        .stMetric { background: linear-gradient(135deg, #ffffff, #e6f0fa); border-radius: 6px; padding: 5px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); border-left: 2px solid #4a90e2; position: relative; padding-left: 20px; height: 45px; width: 100%; display: flex; align-items: center; }
+        .stMetric:before { content: url('path/to/icon.png'); position: absolute; left: 5px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; }
+        .stMetric label, .stMetric div { color: #333333 !important; font-size: 0.75em; margin: 0; }
+        .stMetric div { font-size: 1em; font-weight: 600; }
+        .stPlotlyChart, .stPydeckChart { background-color: #ffffff; border-radius: 6px; padding: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); border-left: 2px solid #50c878; }
+        .stTabs [data-baseweb="tab-list"] { background-color: #e6f0fa; border-radius: 4px; }
+        .stTabs [data-baseweb="tab"] { background-color: #e6f0fa; color: #333333; padding: 6px 12px; transition: all 0.3s; }
+        .stTabs [data-baseweb="tab"]:hover { background-color: #4a90e2; color: white; }
+        .stTabs [data-baseweb="tab--selected"] { background-color: #4a90e2; color: white; border-radius: 4px; }
+        body, .stApp { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        h1 { font-size: 1.8em; color: #4a90e2; font-weight: 600; text-align: center; }
+        h2 { font-size: 1.3em; color: #333333; font-weight: 500; margin-bottom: 6px; }
+        @media (max-width: 768px) { .stColumns > div { width: 100% !important; margin-bottom: 6px; } h1 { font-size: 1.5em; } h2 { font-size: 1.1em; } }
     </style>
-    """, unsafe_allow_html=True)
+    """
+    dark_theme_css = """
+    <style>
+        .main { background-color: #1a1a1a; color: #e0e0e0; }
+        .stMetric { background: linear-gradient(135deg, #2a2a2a, #404040); border-radius: 6px; padding: 5px; box-shadow: 0 1px 2px rgba(255, 255, 255, 0.1); border-left: 2px solid #1e90ff; position: relative; padding-left: 20px; height: 45px; width: 100%; display: flex; align-items: center; }
+        .stMetric:before { content: url('path/to/icon.png'); position: absolute; left: 5px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; filter: brightness(0) invert(1); }
+        .stMetric label, .stMetric div { color: #e0e0e0 !important; font-size: 0.75em; margin: 0; }
+        .stMetric div { font-size: 1em; font-weight: 600; }
+        .stPlotlyChart, .stPydeckChart { background-color: #2a2a2a; border-radius: 6px; padding: 8px; box-shadow: 0 1px 2px rgba(255, 255, 255, 0.1); border-left: 2px solid #50c878; }
+        .stTabs [data-baseweb="tab-list"] { background-color: #404040; border-radius: 4px; }
+        .stTabs [data-baseweb="tab"] { background-color: #404040; color: #e0e0e0; padding: 6px 12px; transition: all 0.3s; }
+        .stTabs [data-baseweb="tab"]:hover { background-color: #1e90ff; color: white; }
+        .stTabs [data-baseweb="tab--selected"] { background-color: #1e90ff; color: white; border-radius: 4px; }
+        body, .stApp { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        h1 { font-size: 1.8em; color: #1e90ff; font-weight: 600; text-align: center; }
+        h2 { font-size: 1.3em; color: #e0e0e0; font-weight: 500; margin-bottom: 6px; }
+        @media (max-width: 768px) { .stColumns > div { width: 100% !important; margin-bottom: 6px; } h1 { font-size: 1.5em; } h2 { font-size: 1.1em; } }
+    </style>
+    """
+    st.markdown(theme_css if theme == "Light" else dark_theme_css, unsafe_allow_html=True)
 
     try:
-        with st.spinner("Loading data..."):
+        with st.spinner("Loading data... 🎉"):
             st.cache_data.clear()
 
             min_date = datetime(2023, 1, 1).date()
@@ -1042,11 +990,18 @@ def main():
                 min_value=min_date,
                 max_value=max_date
             )
+            trip_status_filter = st.sidebar.multiselect(
+                "Filter by Trip Status",
+                options=df['Trip Status'].dropna().unique().tolist() if 'Trip Status' in df.columns else [],
+                default=df['Trip Status'].dropna().unique().tolist() if 'Trip Status' in df.columns else []
+            )
 
             df = load_data()
             if len(date_range) == 2:
                 df = df[(df['Trip Date'].dt.date >= date_range[0]) &
                         (df['Trip Date'].dt.date <= date_range[1])]
+            if trip_status_filter:
+                df = df[df['Trip Status'].isin(trip_status_filter)]
 
             df_passengers = load_passengers_data(date_range)
             df_drivers = load_drivers_data(date_range)
@@ -1090,13 +1045,26 @@ def main():
             mime="application/pdf"
         )
 
-        st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True)  # Reduced from 15px
+        # KPI Summary
+        st.markdown("<h2 style='text-align: center; color: #4a90e2;'>Key Performance Indicators</h2>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Revenue", f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX",
+                      help="Total revenue from completed trips.")
+        with col2:
+            st.metric("Total Drivers", unique_drivers,
+                      help="Number of unique active drivers.")
+        with col3:
+            st.metric("Completion Rate", f"{100 - calculate_cancellation_rate(df):.1f}%" if calculate_cancellation_rate(df) is not None else "N/A",
+                      help="Percentage of trips successfully completed.")
+
+        st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True)
 
         tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Financial", "User Analysis", "Geographic"])
 
         with tab1:
             st.header("Trips Overview")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)  # Reduced from 8px
+            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric("Total Requests", len(df),
@@ -1150,7 +1118,7 @@ def main():
 
         with tab2:
             st.header("Financial Performance")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)  # Reduced from 8px
+            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()
@@ -1193,7 +1161,7 @@ def main():
 
         with tab3:
             st.header("User Performance")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)  # Reduced from 8px
+            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             with col1:
                 unique_driver_count(df)
@@ -1219,7 +1187,7 @@ def main():
 
             st.markdown("---")
             st.subheader("Union Staff Trip Completion")
-            st.markdown("<div style='padding: 3px;'></div>", unsafe_allow_html=True)  # Reduced from 5px
+            st.markdown("<div style='padding: 3px;'></div>", unsafe_allow_html=True)
 
             try:
                 if os.path.exists(UNION_STAFF_FILE_PATH):
@@ -1242,16 +1210,23 @@ def main():
 
         with tab4:
             st.header("Geographic Analysis")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)  # Reduced from 8px
+            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
             most_frequent_locations(df)
             peak_hours(df)
             trip_status_trends(df)
             customer_payment_methods(df)
+            create_map(df)
 
     except FileNotFoundError:
         st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
     except Exception as e:
         st.error(f"Error: {e}")
+
+    st.markdown("---")
+    st.subheader("Provide Feedback")
+    feedback = st.text_area("Your feedback helps us improve!")
+    if st.button("Submit Feedback"):
+        st.success("Thank you for your feedback!")
 
 if __name__ == "__main__":
     if not os.path.exists("data"):
