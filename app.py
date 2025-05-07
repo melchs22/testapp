@@ -494,6 +494,12 @@ def main():
     categories = filtered_df['Trip Status'].value_counts().index[:4].tolist() if not filtered_df.empty else ['A', 'B', 'C', 'D']
     base_values = filtered_df['Trip Pay Amount Cleaned'].value_counts().values[:4] if not filtered_df.empty else np.array([10, 20, 15, 25])
 
+    # Safeguard against empty or invalid base_values
+    if len(base_values) == 0 or np.all(base_values == 0):
+        st.warning("No valid data available for the chart. Using default values.")
+        base_values = np.array([10, 20, 15, 25])
+        categories = ['A', 'B', 'C', 'D']
+
     card_css = """
     <style>
     .chart-card {
@@ -520,13 +526,17 @@ def main():
                 csv = chart_data.to_csv(index=False)
                 st.download_button("Download CSV", csv, "chart_data.csv", "text/csv")
 
+            # Ensure max_value is valid
+            max_value = max(base_values) if max(base_values) > 0 else 1  # Avoid division by zero
+            scaled_values = base_values * (animation_factor / 50)
+
             fig = go.Figure(
                 data=[go.Bar(
                     x=categories,
-                    y=base_values * (animation_factor / 50),
-                    marker_color=[f'rgb({int(255 * (1 - v/max(base_values))), 0, int(255 * (v/max(base_values)))})' 
-                                  for v in base_values * (animation_factor / 50)],
-                    text=base_values * (animation_factor / 50),
+                    y=scaled_values,
+                    marker_color=[f'rgb({int(255 * (1 - v/max_value)), 0, int(255 * (v/max_value))})' 
+                                  for v in scaled_values],
+                    text=[f'{v:.0f}' for v in scaled_values],  # Format text to avoid float precision issues
                     textposition='auto'
                 )],
                 layout=go.Layout(
@@ -556,9 +566,9 @@ def main():
                     frames=[go.Frame(data=[go.Bar(
                         x=categories,
                         y=base_values * (i / 50),
-                        marker_color=[f'rgb({int(255 * (1 - v/max(base_values))), 0, int(255 * (v/max(base_values)))})' 
+                        marker_color=[f'rgb({int(255 * (1 - v/max_value)), 0, int(255 * (v/max_value))})' 
                                       for v in base_values * (i / 50)],
-                        text=base_values * (i / 50),
+                        text=[f'{v:.0f}' for v in base_values * (i / 50)],
                         textposition='auto'
                     )]) for i in range(0, 101, 10)]
                 )
