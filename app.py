@@ -1169,10 +1169,10 @@ def main():
             trip_status_trends(df)
             customer_payment_methods(df)
 
-    except FileNotFoundError:
+         except FileNotFoundError:
         st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
-    except Exception as e:
-        st.error(f"Error: {e}")
+        except Exception as e:
+                             st.error(f"Error: {e}")
 
     # Feedback Section
     st.markdown("---")
