@@ -17,13 +17,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Constants
-DATA_DIR = Path("data")
-LOGO_PATH = Path("TUTU.png")
-
-# Ensure data directory exists
-DATA_DIR.mkdir(exist_ok=True)
-
+@st.cache_data
+def load_excel_file(file_path):
+    try:
+        df = pd.read_excel(file_path)
+        return df
+    except Exception as e:
+        st.error(f"Error loading {file_path}: {e}")
+        return pd.DataFrame()
 # Files expected
 FILES = {
     "passengers":r"./PASSENGERS.xlsx",
