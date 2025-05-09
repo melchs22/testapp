@@ -1184,5 +1184,9 @@ def main():
     <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSeM3Y8mvr74nh-g-UkEN9jNmqz7IcdLoTI2yG1sT1tlS46hVQ/viewform?embedded=true" width="500" height="450" frameborder="0" marginheight="0" marginwidth="0">Loading…</iframe>
     """
     components.html(form_iframe, height=450)
+    if _name_ == "_main_":
+    if not os.path.exists("data"):
+        os.makedirs("data")
+    main()
 
 
