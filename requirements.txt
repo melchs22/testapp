@@ -10,5 +10,5 @@ schedule
 kaleido
 components
 weasyprint
-streamlit sortables
+sortables
 
