@@ -9,10 +9,17 @@ import os
 from io import BytesIO
 import base64
 import tempfile
-from weasyprint import HTML
 import logging
 import json
 from streamlit_sortables import sortables
+
+# Try to import WeasyPrint, handle if it fails
+try:
+    from weasyprint import HTML
+    WEASYPRINT_AVAILABLE = True
+except Exception as e:
+    st.warning(f"WeasyPrint import failed: {str(e)}. HTML-to-PDF export will be disabled.")
+    WEASYPRINT_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -835,7 +842,7 @@ def generate_html_report(grouped_metrics, date_range, df):
             </div>
             <div id="drillDownModal" class="modal">
                 <div class="modal-content">
-                    <span onclick="closeModal()" style="float:right;cursor:pointer;">&times;</span>
+                    <span onclick="closeModal()" style="float:right;cursor:pointer;">×</span>
                     <div id="modalContent"></div>
                 </div>
             </div>
@@ -1205,19 +1212,25 @@ with tab6:
                 mime="text/html"
             )
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
-                tmp.write(html_content.encode('utf-8'))
-                tmp.flush()
-                pdf_buffer = BytesIO()
-                HTML(tmp.name).write_pdf(pdf_buffer)
-                pdf_buffer.seek(0)
-                st.download_button(
-                    label="Download HTML as PDF",
-                    data=pdf_buffer,
-                    file_name="custom_metrics_report_from_html.pdf",
-                    mime="application/pdf"
-                )
-                os.unlink(tmp.name)
+            if WEASYPRINT_AVAILABLE:
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
+                        tmp.write(html_content.encode('utf-8'))
+                        tmp.flush()
+                        pdf_buffer = BytesIO()
+                        HTML(tmp.name).write_pdf(pdf_buffer)
+                        pdf_buffer.seek(0)
+                        st.download_button(
+                            label="Download HTML as PDF",
+                            data=pdf_buffer,
+                            file_name="custom_metrics_report_from_html.pdf",
+                            mime="application/pdf"
+                        )
+                        os.unlink(tmp.name)
+                except Exception as e:
+                    st.error(f"Error generating HTML as PDF: {str(e)}")
+            else:
+                st.info("HTML-to-PDF conversion is disabled due to missing WeasyPrint dependencies.")
 
 # Sidebar export
 st.sidebar.header("Export Data")
