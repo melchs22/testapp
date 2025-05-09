@@ -1185,7 +1185,4 @@ def main():
     """
     components.html(form_iframe, height=450)
 
-if _name_ == "_main_":
-    if not os.path.exists("data"):
-        os.makedirs("data")
-    main()
+
