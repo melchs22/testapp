@@ -3,33 +3,29 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import requests
-import os
-import re
-import streamlit.components.v1 as components
-from dotenv import load_dotenv
-import io
 from fpdf import FPDF
+import re
+import os
+from io import BytesIO
+import base64
+import tempfile
+from weasyprint import HTML
+import logging
+import json
+from streamlit_sortables import sortables
 
-# Load environment variables
-load_dotenv()
-OPENCAGE_API_KEY = os.getenv('OPENCAGE_API_KEY')
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Configure page
-st.set_page_config(
-    page_title="Union App Metrics Dashboard",
-    page_icon=r"./TUTU.png",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# File paths (relative for Streamlit Cloud)
+PASSENGERS_FILE_PATH = "./PASSENGERS.xlsx"
+DRIVERS_FILE_PATH = "./DRIVERS.xlsx"
+DATA_FILE_PATH = "./BEER.xlsx"
+TRANSACTIONS_FILE_PATH = "./TRANSACTIONS.xlsx"
+UNION_STAFF_FILE_PATH = "./UNION STAFF.xlsx"
+LOGO_PATH = "./TUTU.png"
 
-PASSENGERS_FILE_PATH = r"./PASSENGERS.xlsx"
-DRIVERS_FILE_PATH = r"./DRIVERS.xlsx"
-DATA_FILE_PATH = r"./BEER.xlsx"
-TRANSACTIONS_FILE_PATH = r"./TRANSACTIONS.xlsx"
-UNION_STAFF_FILE_PATH = r"./UNION STAFF.xlsx"
-
-# Enhanced function to extract UGX amounts from any column
+# Utility function to extract UGX amounts
 def extract_ugx_amount(value):
     try:
         if pd.isna(value) or value is None:
@@ -46,14 +42,16 @@ def extract_ugx_amount(value):
     except (ValueError, TypeError):
         return 0.0
 
-# Function to load passengers data with date filtering
+# Data loading functions
 def load_passengers_data(date_range=None):
     try:
+        if not os.path.exists(PASSENGERS_FILE_PATH):
+            st.error("PASSENGERS.xlsx not found.")
+            return pd.DataFrame()
         df = pd.read_excel(PASSENGERS_FILE_PATH)
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
             df['Wallet Balance'] = df['Wallet Balance'].apply(extract_ugx_amount)
-
         if date_range and len(date_range) == 2:
             start_date, end_date = date_range
             df = df[(df['Created'].dt.date >= start_date) &
@@ -63,9 +61,11 @@ def load_passengers_data(date_range=None):
         st.error(f"Error loading passengers data: {str(e)}")
         return pd.DataFrame()
 
-# Function to load drivers data with date filtering
 def load_drivers_data(date_range=None):
     try:
+        if not os.path.exists(DRIVERS_FILE_PATH):
+            st.error("DRIVERS.xlsx not found.")
+            return pd.DataFrame()
         df = pd.read_excel(DRIVERS_FILE_PATH)
         df['Created'] = pd.to_datetime(df['Created'], errors='coerce')
         if 'Wallet Balance' in df.columns:
@@ -75,23 +75,17 @@ def load_drivers_data(date_range=None):
         st.error(f"Error loading drivers data: {str(e)}")
         return pd.DataFrame()
 
-# Function to load and merge transactions data
 def load_transactions_data():
     try:
+        if not os.path.exists(TRANSACTIONS_FILE_PATH):
+            st.error("TRANSACTIONS.xlsx not found.")
+            return pd.DataFrame()
         transactions_df = pd.read_excel(TRANSACTIONS_FILE_PATH)
-        
         if 'Company Amt (UGX)' in transactions_df.columns:
             transactions_df['Company Commission Cleaned'] = transactions_df['Company Amt (UGX)'].apply(extract_ugx_amount)
         else:
-            st.warning("No 'Company Amt (UGX)' column found in transactions data")
             transactions_df['Company Commission Cleaned'] = 0.0
-            
-        if 'Pay Mode' in transactions_df.columns:
-            transactions_df['Pay Mode'] = transactions_df['Pay Mode'].fillna('Unknown')
-        else:
-            st.warning("No 'Pay Mode' column found in transactions data")
-            transactions_df['Pay Mode'] = 'Unknown'
-            
+        transactions_df['Pay Mode'] = transactions_df.get('Pay Mode', 'Unknown').fillna('Unknown')
         return transactions_df[['Company Commission Cleaned', 'Pay Mode']]
     except Exception as e:
         st.error(f"Error loading transactions data: {str(e)}")
@@ -99,46 +93,32 @@ def load_transactions_data():
 
 def load_data():
     try:
+        if not os.path.exists(DATA_FILE_PATH):
+            st.error("BEER.xlsx not found.")
+            return pd.DataFrame()
         df = pd.read_excel(DATA_FILE_PATH)
-        
         transactions_df = load_transactions_data()
         if not transactions_df.empty:
             if 'Company Commission Cleaned' in df.columns and 'Company Commission Cleaned' in transactions_df.columns:
                 df['Company Commission Cleaned'] += transactions_df['Company Commission Cleaned']
             elif 'Company Commission Cleaned' not in df.columns:
                 df['Company Commission Cleaned'] = transactions_df['Company Commission Cleaned']
-                
             if 'Pay Mode' not in df.columns:
                 df['Pay Mode'] = transactions_df['Pay Mode']
-
         df['Trip Date'] = pd.to_datetime(df['Trip Date'], errors='coerce')
         df['Trip Hour'] = df['Trip Date'].dt.hour
         df['Day of Week'] = df['Trip Date'].dt.day_name()
         df['Month'] = df['Trip Date'].dt.month_name()
-
-        if 'Trip Pay Amount' in df.columns:
-            df['Trip Pay Amount Cleaned'] = df['Trip Pay Amount'].apply(extract_ugx_amount)
-        else:
-            st.warning("No 'Trip Pay Amount' column found - creating placeholder")
-            df['Trip Pay Amount Cleaned'] = 0.0
-
-        df['Distance'] = pd.to_numeric(df['Trip Distance (KM/Mi)'], errors='coerce').fillna(0)
-
-        if 'Company Commission Cleaned' not in df.columns:
-            st.warning("No company commission data found - creating placeholder")
-            df['Company Commission Cleaned'] = 0.0
-
-        if 'Pay Mode' not in df.columns:
-            st.warning("No 'Pay Mode' column found - adding placeholder")
-            df['Pay Mode'] = 'Unknown'
-
+        df['Trip Pay Amount Cleaned'] = df.get('Trip Pay Amount', 0.0).apply(extract_ugx_amount)
+        df['Distance'] = pd.to_numeric(df.get('Trip Distance (KM/Mi)', 0), errors='coerce').fillna(0)
+        df['Company Commission Cleaned'] = df.get('Company Commission Cleaned', 0.0)
+        df['Pay Mode'] = df.get('Pay Mode', 'Unknown')
         return df
-
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
 
-# Define metrics functions
+# Metric calculation functions
 def passenger_metrics(df_passengers):
     try:
         app_downloads = len(df_passengers) if not df_passengers.empty else 0
@@ -153,16 +133,11 @@ def driver_metrics(df_drivers):
         riders_onboarded = len(df_drivers) if not df_drivers.empty else 0
         if 'Wallet Balance' in df_drivers.columns:
             df_drivers['Wallet Balance'] = pd.to_numeric(df_drivers['Wallet Balance'], errors='coerce').fillna(0.0)
-            
             positive_balances = df_drivers[df_drivers['Wallet Balance'] > 0]['Wallet Balance']
             driver_wallet_balance = float(positive_balances.sum()) if not positive_balances.empty else 0.0
-            
             negative_balances = df_drivers[df_drivers['Wallet Balance'] < 0]['Wallet Balance']
             commission_owed = float(negative_balances.abs().sum()) if not negative_balances.empty else 0.0
-            
-            st.info(f"Processed {len(positive_balances)} positive and {len(negative_balances)} negative wallet balances.")
         else:
-            st.warning("No 'Wallet Balance' column found in drivers data.")
             driver_wallet_balance = 0.0
             commission_owed = 0.0
         return riders_onboarded, driver_wallet_balance, commission_owed
@@ -179,7 +154,6 @@ def calculate_driver_retention_rate(riders_onboarded, app_downloads, unique_driv
         st.error(f"Error calculating retention rate: {str(e)}")
         return 0.0, 0.0
 
-# Define other required functions
 def calculate_cancellation_rate(df):
     try:
         if 'Trip Status' not in df.columns:
@@ -207,11 +181,7 @@ def completed_vs_cancelled_daily(df):
         status_df = df.groupby([df['Trip Date'].dt.date, 'Trip Status']).size().unstack(fill_value=0)
         fig = go.Figure()
         for status in status_df.columns:
-            fig.add_trace(go.Bar(
-                x=status_df.index,
-                y=status_df[status],
-                name=status
-            ))
+            fig.add_trace(go.Bar(x=status_df.index, y=status_df[status], name=status))
         fig.update_layout(
             title="Daily Trip Status Breakdown",
             xaxis_title="Date",
@@ -226,196 +196,167 @@ def completed_vs_cancelled_daily(df):
 def trips_per_driver(df):
     try:
         if 'Driver' not in df.columns:
-            st.metric("Avg. Trips per Driver", "N/A",
-                      help="Average number of trips completed per driver (data unavailable).")
+            st.metric("Avg. Trips per Driver", "N/A")
             return
         trips_by_driver = df.groupby('Driver').size()
         avg_trips = trips_by_driver.mean() if not trips_by_driver.empty else 0
-        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}",
-                  help="Average number of trips completed per driver.")
+        st.metric("Avg. Trips per Driver", f"{avg_trips:.1f}")
     except Exception as e:
         st.error(f"Error in trips per driver: {str(e)}")
 
 def total_trips_by_status(df):
     try:
         if 'Trip Status' not in df.columns:
-            return
+            return None
         status_counts = df['Trip Status'].value_counts()
-        fig = px.pie(
-            values=status_counts.values,
-            names=status_counts.index,
-            title="Trip Status Distribution"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.pie(values=status_counts.values, names=status_counts.index, title="Trip Status Distribution")
+        return fig
     except Exception as e:
         st.error(f"Error in total trips by status: {str(e)}")
+        return None
 
 def total_distance_covered(df):
     try:
         if 'Distance' not in df.columns or 'Trip Status' not in df.columns:
-            st.metric("Total Distance Covered", "N/A",
-                      help="Total distance covered by completed trips (data unavailable).")
+            st.metric("Total Distance Covered", "N/A")
             return
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         total_distance = completed_trips['Distance'].sum()
-        st.metric("Total Distance Covered", f"{total_distance:,.0f} km",
-                  help="Total distance covered by completed trips in kilometers.")
+        st.metric("Total Distance Covered", f"{total_distance:,.0f} km")
     except Exception as e:
         st.error(f"Error in total distance covered: {str(e)}")
 
 def revenue_by_day(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Trip Date' not in df.columns:
-            return
+            return None
         daily_revenue = df.groupby(df['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum().reset_index()
-        daily_revenue['Trip Date'] = daily_revenue['Trip Date'].astype(str)  # Ensure Trip Date is string for animation
+        daily_revenue['Trip Date'] = daily_revenue['Trip Date'].astype(str)
         fig = px.line(
             daily_revenue,
             x='Trip Date',
             y='Trip Pay Amount Cleaned',
             title="Daily Revenue Trend",
-            labels={'Trip Date': 'Date', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'},
-            animation_frame='Trip Date'  # Add animation
+            labels={'Trip Date': 'Date', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'}
         )
         fig.update_traces(mode='lines+markers')
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in revenue by day: {str(e)}")
+        return None
 
 def avg_revenue_per_trip(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns:
-            st.metric("Avg. Revenue per Trip", "N/A",
-                      help="Average revenue generated per trip (data unavailable).")
+            st.metric("Avg. Revenue per Trip", "N/A")
             return
         avg_revenue = df['Trip Pay Amount Cleaned'].mean()
-        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX",
-                  help="Average revenue generated per trip in UGX.")
+        st.metric("Avg. Revenue per Trip", f"{avg_revenue:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in avg revenue per trip: {str(e)}")
 
 def total_commission(df):
     try:
         if 'Company Commission Cleaned' not in df.columns:
-            st.metric("Total Commission", "N/A",
-                      help="Total commission earned by the company (data unavailable).")
+            st.metric("Total Commission", "N/A")
             return
         total_comm = df['Company Commission Cleaned'].sum()
-        st.metric("Total Commission", f"{total_comm:,.0f} UGX",
-                  help="Total commission earned by the company from trips.")
+        st.metric("Total Commission", f"{total_comm:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in total commission: {str(e)}")
 
 def gross_profit(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
-            st.metric("Gross Profit", "N/A",
-                      help="Total commission earned, representing profit before expenses (data unavailable).")
+            st.metric("Gross Profit", "N/A")
             return
         gross_profit = df['Company Commission Cleaned'].sum()
-        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX",
-                  help="Total commission earned, representing profit before expenses.")
+        st.metric("Gross Profit", f"{gross_profit:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in gross profit: {str(e)}")
 
 def avg_commission_per_trip(df):
     try:
         if 'Company Commission Cleaned' not in df.columns:
-            st.metric("Avg. Commission per Trip", "N/A",
-                      help="Average commission earned per trip (data unavailable).")
+            st.metric("Avg. Commission per Trip", "N/A")
             return
         avg_comm = df['Company Commission Cleaned'].mean()
-        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX",
-                  help="Average commission earned per trip in UGX.")
+        st.metric("Avg. Commission per Trip", f"{avg_comm:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in avg commission per trip: {str(e)}")
 
 def revenue_per_driver(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            st.metric("Avg. Revenue per Driver", "N/A",
-                      help="Average revenue generated per driver (data unavailable).")
+            st.metric("Avg. Revenue per Driver", "N/A")
             return
         revenue_by_driver = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum()
         avg_revenue = revenue_by_driver.mean() if not revenue_by_driver.empty else 0
-        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX",
-                  help="Average revenue generated per driver in UGX.")
+        st.metric("Avg. Revenue per Driver", f"{avg_revenue:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in revenue per driver: {str(e)}")
 
 def driver_earnings_per_trip(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
-            st.metric("Avg. Driver Earnings per Trip", "N/A",
-                      help="Average earnings per trip for drivers after commission (data unavailable).")
+            st.metric("Avg. Driver Earnings per Trip", "N/A")
             return
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
         avg_earnings = df['Driver Earnings'].mean()
-        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX",
-                  help="Average earnings per trip for drivers after commission in UGX.")
+        st.metric("Avg. Driver Earnings per Trip", f"{avg_earnings:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in driver earnings per trip: {str(e)}")
 
 def fare_per_km(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Distance' not in df.columns or 'Trip Status' not in df.columns:
-            st.metric("Avg. Fare per KM", "N/A",
-                      help="Average revenue per kilometer for completed trips (data unavailable).")
+            st.metric("Avg. Fare per KM", "N/A")
             return
         completed_trips = df[df['Trip Status'] == 'Job Completed']
         completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
         avg_fare_per_km = completed_trips['Fare per KM'].mean()
-        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX",
-                  help="Average revenue per kilometer for completed trips in UGX.")
+        st.metric("Avg. Fare per KM", f"{avg_fare_per_km:,.0f} UGX")
     except Exception as e:
         st.error(f"Error in fare per km: {str(e)}")
 
 def revenue_share(df):
     try:
         if 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
-            st.metric("Revenue Share", "N/A",
-                      help="Percentage of revenue retained as commission (data unavailable).")
+            st.metric("Revenue Share", "N/A")
             return
         total_revenue = df['Trip Pay Amount Cleaned'].sum()
         total_commission = df['Company Commission Cleaned'].sum()
         revenue_share = (total_commission / total_revenue * 100) if total_revenue > 0 else 0
-        st.metric("Revenue Share", f"{revenue_share:.1f}%",
-                  help="Percentage of revenue retained as commission.")
+        st.metric("Revenue Share", f"{revenue_share:.1f}%")
     except Exception as e:
         st.error(f"Error in revenue share: {str(e)}")
 
 def total_trips_by_type(df):
     try:
         if 'Trip Type' not in df.columns:
-            return
+            return None
         type_counts = df['Trip Type'].value_counts()
-        fig = px.pie(
-            values=type_counts.values,
-            names=type_counts.index,
-            title="Trips by Type"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.pie(values=type_counts.values, names=type_counts.index, title="Trips by Type")
+        return fig
     except Exception as e:
         st.error(f"Error in total trips by type: {str(e)}")
+        return None
 
 def payment_method_revenue(df):
     try:
         if 'Pay Mode' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            return
+            return None
         revenue_by_payment = df.groupby('Pay Mode')['Trip Pay Amount Cleaned'].sum()
-        fig = px.pie(
-            values=revenue_by_payment.values,
-            names=revenue_by_payment.index,
-            title="Revenue by Payment Method"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.pie(values=revenue_by_payment.values, names=revenue_by_payment.index, title="Revenue by Payment Method")
+        return fig
     except Exception as e:
         st.error(f"Error in payment method revenue: {str(e)}")
+        return None
 
 def distance_vs_revenue_scatter(df):
     try:
         if 'Distance' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            return
+            return None
         fig = px.scatter(
             df,
             x='Distance',
@@ -423,14 +364,15 @@ def distance_vs_revenue_scatter(df):
             title="Distance vs Revenue",
             labels={'Distance': 'Distance (km)', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in distance vs revenue scatter: {str(e)}")
+        return None
 
 def weekday_vs_weekend_analysis(df):
     try:
         if 'Day of Week' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            return
+            return None
         df['Is Weekend'] = df['Day of Week'].isin(['Saturday', 'Sunday'])
         revenue_by_period = df.groupby('Is Weekend')['Trip Pay Amount Cleaned'].sum()
         fig = px.bar(
@@ -439,26 +381,25 @@ def weekday_vs_weekend_analysis(df):
             title="Weekday vs Weekend Revenue",
             labels={'x': 'Period', 'y': 'Revenue (UGX)'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in weekday vs weekend analysis: {str(e)}")
+        return None
 
 def unique_driver_count(df):
     try:
         if 'Driver' not in df.columns:
-            st.metric("Unique Drivers", "N/A",
-                      help="Number of distinct drivers who completed trips (data unavailable).")
+            st.metric("Unique Drivers", "N/A")
             return
         unique_drivers = df['Driver'].nunique()
-        st.metric("Unique Drivers", unique_drivers,
-                  help="Number of distinct drivers who completed trips.")
+        st.metric("Unique Drivers", unique_drivers)
     except Exception as e:
         st.error(f"Error in unique driver count: {str(e)}")
 
 def top_drivers_by_revenue(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns:
-            return
+            return None
         top_drivers = df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().nlargest(5)
         fig = px.bar(
             x=top_drivers.values,
@@ -467,14 +408,15 @@ def top_drivers_by_revenue(df):
             title="Top 5 Drivers by Revenue",
             labels={'x': 'Revenue (UGX)', 'y': 'Driver'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in top drivers by revenue: {str(e)}")
+        return None
 
 def driver_performance_comparison(df):
     try:
         if 'Driver' not in df.columns:
-            return
+            return None
         driver_stats = df.groupby('Driver').agg({
             'Id': 'count',
             'Trip Pay Amount Cleaned': 'sum',
@@ -489,14 +431,15 @@ def driver_performance_comparison(df):
             title="Driver Performance Comparison",
             labels={'Trip Count': 'Number of Trips', 'Trip Pay Amount Cleaned': 'Revenue (UGX)'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in driver performance comparison: {str(e)}")
+        return None
 
 def passenger_insights(df):
     try:
         if 'Passenger' not in df.columns:
-            return
+            return None
         passenger_trips = df.groupby('Passenger').size().value_counts()
         fig = px.bar(
             x=passenger_trips.index,
@@ -504,14 +447,15 @@ def passenger_insights(df):
             title="Passenger Trip Frequency",
             labels={'x': 'Number of Trips', 'y': 'Number of Passengers'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in passenger insights: {str(e)}")
+        return None
 
 def top_10_drivers_by_earnings(df):
     try:
         if 'Driver' not in df.columns or 'Trip Pay Amount Cleaned' not in df.columns or 'Company Commission Cleaned' not in df.columns:
-            return
+            return None
         df['Driver Earnings'] = df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']
         top_drivers = df.groupby('Driver')['Driver Earnings'].sum().nlargest(10)
         fig = px.bar(
@@ -521,9 +465,10 @@ def top_10_drivers_by_earnings(df):
             title="Top 10 Drivers by Earnings",
             labels={'x': 'Earnings (UGX)', 'y': 'Driver'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in top 10 drivers by earnings: {str(e)}")
+        return None
 
 def get_completed_trips_by_union_passengers(df, union_staff_names):
     try:
@@ -541,7 +486,7 @@ def get_completed_trips_by_union_passengers(df, union_staff_names):
 def most_frequent_locations(df):
     try:
         if 'Pickup Location' not in df.columns or 'Dropoff Location' not in df.columns:
-            return
+            return None
         pickup_counts = df['Pickup Location'].value_counts().head(5)
         dropoff_counts = df['Dropoff Location'].value_counts().head(5)
         col1, col2 = st.columns(2)
@@ -563,13 +508,15 @@ def most_frequent_locations(df):
                 labels={'x': 'Number of Trips', 'y': 'Location'}
             )
             st.plotly_chart(fig2, use_container_width=True)
+        return fig1  # Return one for report purposes
     except Exception as e:
         st.error(f"Error in most frequent locations: {str(e)}")
+        return None
 
 def peak_hours(df):
     try:
         if 'Trip Hour' not in df.columns:
-            return
+            return None
         hour_counts = df['Trip Hour'].value_counts().sort_index()
         fig = px.bar(
             x=hour_counts.index,
@@ -577,14 +524,15 @@ def peak_hours(df):
             title="Trip Distribution by Hour",
             labels={'x': 'Hour of Day', 'y': 'Number of Trips'}
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in peak hours: {str(e)}")
+        return None
 
 def trip_status_trends(df):
     try:
         if 'Trip Status' not in df.columns or 'Trip Date' not in df.columns:
-            return
+            return None
         status_trends = df.groupby([df['Trip Date'].dt.date, 'Trip Status']).size().unstack(fill_value=0)
         fig = go.Figure()
         for status in status_trends.columns:
@@ -600,33 +548,28 @@ def trip_status_trends(df):
             yaxis_title="Number of Trips",
             template="plotly_white"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
     except Exception as e:
         st.error(f"Error in trip status trends: {str(e)}")
+        return None
 
 def customer_payment_methods(df):
     try:
         if 'Pay Mode' not in df.columns:
-            return
+            return None
         payment_counts = df['Pay Mode'].value_counts()
-        fig = px.pie(
-            values=payment_counts.values,
-            names=payment_counts.index,
-            title="Customer Payment Methods"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.pie(values=payment_counts.values, names=payment_counts.index, title="Customer Payment Methods")
+        return fig
     except Exception as e:
         st.error(f"Error in customer payment methods: {str(e)}")
+        return None
 
 def get_download_data(df, date_range):
     try:
         if df.empty or 'Trip Date' not in df.columns:
             return pd.DataFrame()
-
-        start_date = date_range[0]
-        end_date = date_range[1]
+        start_date, end_date = date_range
         date_list = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
-
         daily_data = pd.DataFrame(index=date_list)
         daily_data.index.name = 'Date'
 
@@ -634,10 +577,7 @@ def get_download_data(df, date_range):
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             daily_value = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].sum()
             for date in date_list:
-                daily_data.loc[date, 'Total Value of Rides (local currency)'] = daily_value.get(date, 0.0)
-
-        for date in date_list:
-            daily_data.loc[date, 'Total Rider Subscriptions Made per Day'] = 0
+                daily_data.loc[date, 'Total Value of Rides (UGX)'] = daily_value.get(date, 0.0)
 
         if 'Company Commission Cleaned' in df.columns:
             daily_commissions = df.groupby(df['Trip Date'].dt.date)['Company Commission Cleaned'].sum()
@@ -659,78 +599,75 @@ def get_download_data(df, date_range):
             for date in date_list:
                 daily_data.loc[date, 'Average Trip Distance (km)'] = daily_distance.get(date, 0.0)
 
-        for date in date_list:
-            daily_data.loc[date, 'Average Trip Time (minutes)'] = 0
-
-        if 'Trip Status' in df.columns:
-            daily_completion = df.groupby(df['Trip Date'].dt.date).apply(lambda x: calculate_cancellation_rate(x) if calculate_cancellation_rate(x) is not None else 0)
-            for date in date_list:
-                daily_data.loc[date, 'Completion Rate (ungrouped)'] = 100 - daily_completion.get(date, 0.0) if not pd.isna(daily_completion.get(date, 0.0)) else 0.0
-
         if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns:
             completed_trips = df[df['Trip Status'] == 'Job Completed']
             daily_price = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Trip Pay Amount Cleaned'].mean()
             for date in date_list:
                 daily_data.loc[date, 'Average Customer Price per Ride'] = daily_price.get(date, 0.0)
 
-        if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns:
-            completed_trips = df[df['Trip Status'] == 'Job Completed']
-            completed_trips['Fare per KM'] = completed_trips['Trip Pay Amount Cleaned'] / completed_trips['Distance'].replace(0, 1)
-            daily_fare_per_km = completed_trips.groupby(completed_trips['Trip Date'].dt.date)['Fare per KM'].mean()
-            for date in date_list:
-                daily_data.loc[date, 'Average Customer Price per Kilometer'] = daily_fare_per_km.get(date, 0.0)
-
-        for date in date_list:
-            daily_data.loc[date, 'Average Price per Kilometer'] = daily_data.loc[date, 'Average Customer Price per Kilometer']
-
-        if 'Driver' in df.columns:
-            daily_drivers = df.groupby(df['Trip Date'].dt.date)['Driver'].nunique()
-            for date in date_list:
-                daily_data.loc[date, 'Daily Active Drivers'] = daily_drivers.get(date, 0)
-
-        for date in date_list:
-            daily_data.loc[date, 'First Time Active Riders'] = 0
-
-        if 'Passenger' in df.columns:
-            cumulative_riders = df.groupby(df['Trip Date'].dt.date)['Passenger'].nunique().cumsum()
-            for date in date_list:
-                daily_data.loc[date, 'Total Cumulative Riders'] = cumulative_riders.get(date, 0)
-
-        for date in date_list:
-            daily_data.loc[date, '% of Riders Engaged'] = 0
-
-        for date in date_list:
-            daily_data.loc[date, '% of Suspended Riders'] = 0
-
-        if 'Passenger' in df.columns:
-            daily_orders = df.groupby([df['Trip Date'].dt.date, 'Passenger']).size().groupby(level=0).mean()
-            for date in date_list:
-                daily_data.loc[date, 'Order per Rider'] = daily_orders.get(date, 0.0)
-
-        for date in date_list:
-            daily_data.loc[date, 'Average Rider Earnings per Day'] = 0
-
-        for date in date_list:
-            daily_data.loc[date, 'Daily Online Riders'] = 0
-
-        for date in date_list:
-            daily_data.loc[date, 'Bike Riders Acceptance Rate'] = 0
-
-        for date in date_list:
-            daily_data.loc[date, 'Total Passenger app Downloads Per'] = 0
-
         return daily_data.reset_index()
-
     except Exception as e:
         st.error(f"Error in get download data: {str(e)}")
         return pd.DataFrame()
 
-def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded, passenger_wallet_balance, driver_wallet_balance, commission_owed):
+def print_console_summary(df, df_passengers, df_drivers, date_range, app_downloads, passenger_wallet_balance, riders_onboarded, driver_wallet_balance, commission_owed, retention_rate, passenger_ratio):
+    logging.info("=== Ride-Hailing Metrics Summary ===")
+    logging.info(f"Date Range: {date_range[0]} to {date_range[1]}")
+    logging.info("\nPassenger Metrics:")
+    logging.info(f"  - App Downloads: {app_downloads:,}")
+    logging.info(f"  - Total Wallet Balance: {passenger_wallet_balance:,.0f} UGX")
+    logging.info("\nDriver Metrics:")
+    logging.info(f"  - Riders Onboarded: {riders_onboarded:,}")
+    logging.info(f"  - Unique Drivers: {df['Driver'].nunique() if 'Driver' in df.columns else 0:,}")
+    logging.info(f"  - Driver Wallet Balance: {driver_wallet_balance:,.0f} UGX")
+    logging.info(f"  - Commission Owed: {commission_owed:,.0f} UGX")
+    logging.info(f"  - Retention Rate: {retention_rate:.1f}%")
+    logging.info(f"  - Passenger-to-Driver Ratio: {passenger_ratio:.1f}")
+    logging.info("\nTrip Metrics:")
+    total_requests = len(df)
+    completed_trips = len(df[df['Trip Status'] == 'Job Completed']) if 'Trip Status' in df.columns else 0
+    cancellation_rate = calculate_cancellation_rate(df)
+    timeout_rate = calculate_passenger_search_timeout(df)
+    avg_distance = df['Distance'].mean() if 'Distance' in df.columns else 0
+    logging.info(f"  - Total Requests: {total_requests:,}")
+    logging.info(f"  - Completed Trips: {completed_trips:,}")
+    logging.info(f"  - Cancellation Rate: {cancellation_rate:.1f}%")
+    logging.info(f"  - Search Timeout Rate: {timeout_rate:.1f}%")
+    logging.info(f"  - Average Distance: {avg_distance:.1f} km")
+    logging.info("\nFinancial Metrics:")
+    total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum() if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else 0
+    total_commission = df['Company Commission Cleaned'].sum() if 'Company Commission Cleaned' in df.columns else 0
+    avg_revenue_per_trip = df['Trip Pay Amount Cleaned'].mean() if 'Trip Pay Amount Cleaned' in df.columns else 0
+    revenue_share = (total_commission / total_revenue * 100) if total_revenue > 0 else 0
+    logging.info(f"  - Total Revenue: {total_revenue:,.0f} UGX")
+    logging.info(f"  - Total Commission: {total_commission:,.0f} UGX")
+    logging.info(f"  - Average Revenue per Trip: {avg_revenue_per_trip:,.0f} UGX")
+    logging.info(f"  - Revenue Share: {revenue_share:.1f}%")
+    logging.info("\nGeographic Insights:")
+    top_pickup = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
+    top_dropoff = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and not df['Dropoff Location'].value_counts().empty else "N/A"
+    peak_hour = df['Trip Hour'].value_counts().index[0] if 'Trip Hour' in df.columns and not df['Trip Hour'].value_counts().empty else "N/A"
+    logging.info(f"  - Top Pickup Location: {top_pickup}")
+    logging.info(f"  - Top Dropoff Location: {top_dropoff}")
+    logging.info(f"  - Peak Hour: {peak_hour}:00")
+    logging.info("\nKey Insights and Recommendations:")
+    if cancellation_rate and cancellation_rate > 10:
+        logging.info("  - High cancellation rate detected (>10%). Consider driver incentives.")
+    if timeout_rate and timeout_rate > 5:
+        logging.info("  - Significant search timeouts (>5%). Increase driver availability.")
+    if retention_rate < 50:
+        logging.info("  - Low driver retention rate (<50%). Enhance driver support.")
+    if revenue_share < 20:
+        logging.info("  - Low revenue share (<20%). Review commission structure.")
+    logging.info("=== End of Summary ===")
+
+def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded, passenger_wallet_balance, driver_wallet_balance, commission_owed, grouped_metrics=None):
     try:
         class PDF(FPDF):
             def header(self):
                 try:
-                    self.image(r"./TUTU.png", x=5, y=4, w=19)
+                    if os.path.exists(LOGO_PATH):
+                        self.image(LOGO_PATH, x=5, y=4, w=19)
                 except Exception as e:
                     self.set_font('Arial', 'I', 8)
                     self.cell(0, 10, f'Could not load logo: {str(e)}', 0, 1, 'L')
@@ -759,433 +696,552 @@ def create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_down
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
 
-        start_date_str = 'N/A'
-        end_date_str = 'N/A'
-        if date_range and len(date_range) == 2:
-            start_date, end_date = date_range
-            try:
-                start_date_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
-                end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
-            except (AttributeError, TypeError):
-                pass
+        start_date_str = date_range[0].strftime('%Y-%m-%d') if date_range else 'N/A'
+        end_date_str = date_range[1].strftime('%Y-%m-%d') if date_range else 'N/A'
         pdf.cell(0, 10, f"Date Range: {start_date_str} to {end_date_str}", 0, 1, 'C')
         pdf.ln(5)
 
-        pdf.add_section_title("Trips Overview")
-        total_requests = int(len(df))
-        completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
-        avg_distance = f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A"
-        cancellation_rate = calculate_cancellation_rate(df)
-        cancellation_rate_str = f"{cancellation_rate:.1f}%" if cancellation_rate is not None else "N/A"
-        timeout_rate = calculate_passenger_search_timeout(df)
-        timeout_rate_str = f"{timeout_rate:.1f}%" if timeout_rate is not None else "N/A"
-        avg_trips_per_driver = f"{df.groupby('Driver').size().mean():.1f}" if 'Driver' in df.columns and not df.empty else "N/A"
-        total_distance_covered = f"{df[df['Trip Status'] == 'Job Completed']['Distance'].sum():,.0f} km" if 'Distance' in df.columns and 'Trip Status' in df.columns else "N/A"
-        avg_revenue_per_trip = f"{df['Trip Pay Amount Cleaned'].mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns else "N/A"
-        total_commission = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
+        if grouped_metrics:
+            for group_name, metrics in grouped_metrics.items():
+                pdf.add_section_title(group_name)
+                for metric, viz in metrics:
+                    value = metric_functions[metric](df, df_passengers, df_drivers)
+                    pdf.add_metric(metric, value, f"Visualization: {viz}")
+        else:
+            pdf.add_section_title("Trips Overview")
+            total_requests = int(len(df))
+            completed_trips = int(len(df[df['Trip Status'] == 'Job Completed'])) if 'Trip Status' in df.columns else 0
+            avg_distance = f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A"
+            cancellation_rate = calculate_cancellation_rate(df)
+            cancellation_rate_str = f"{cancellation_rate:.1f}%" if cancellation_rate is not None else "N/A"
+            timeout_rate = calculate_passenger_search_timeout(df)
+            timeout_rate_str = f"{timeout_rate:.1f}%" if timeout_rate is not None else "N/A"
+            avg_trips_per_driver = f"{df.groupby('Driver').size().mean():.1f}" if 'Driver' in df.columns and not df.empty else "N/A"
+            total_distance_covered = f"{df[df['Trip Status'] == 'Job Completed']['Distance'].sum():,.0f} km" if 'Distance' in df.columns and 'Trip Status' in df.columns else "N/A"
+            avg_revenue_per_trip = f"{df['Trip Pay Amount Cleaned'].mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns else "N/A"
+            total_commission = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
 
-        pdf.add_metric("Total Requests", total_requests, 
-                       "Measures total demand for rides, including all trip requests.")
-        pdf.add_metric("Completed Trips", completed_trips, 
-                       "Counts successful trips from pickup to dropoff.")
-        pdf.add_metric("Average Distance", avg_distance, 
-                       "Average distance per trip.")
-        pdf.add_metric("Driver Cancellation Rate", cancellation_rate_str, 
-                       "Percentage of trips cancelled by drivers.")
-        pdf.add_metric("Passenger Search Timeout", timeout_rate_str, 
-                       "Percentage of trips expiring due to no driver acceptance.")
-        pdf.add_metric("Average Trips per Driver", avg_trips_per_driver, 
-                       "Mean trips per driver.")
-        pdf.add_metric("Passenger App Downloads", int(app_downloads), 
-                       "Total app installations.")
-        pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
-                       "Number of drivers registered.")
-        pdf.add_metric("Total Distance Covered", total_distance_covered, 
-                       "Sum of distances for completed trips.")
-        pdf.add_metric("Average Revenue per Trip", avg_revenue_per_trip, 
-                       "Mean revenue per trip.")
-        pdf.add_metric("Total Commission", total_commission, 
-                       "Sum of commissions earned.")
+            pdf.add_metric("Total Requests", total_requests, "Measures total demand for rides.")
+            pdf.add_metric("Completed Trips", completed_trips, "Counts successful trips.")
+            pdf.add_metric("Average Distance", avg_distance, "Average distance per trip.")
+            pdf.add_metric("Driver Cancellation Rate", cancellation_rate_str, "Percentage of trips cancelled by drivers.")
+            pdf.add_metric("Passenger Search Timeout", timeout_rate_str, "Percentage of trips expiring.")
+            pdf.add_metric("Average Trips per Driver", avg_trips_per_driver, "Mean trips per driver.")
+            pdf.add_metric("Passenger App Downloads", int(app_downloads), "Total app installations.")
+            pdf.add_metric("Riders Onboarded", int(riders_onboarded), "Number of drivers registered.")
+            pdf.add_metric("Total Distance Covered", total_distance_covered, "Sum of distances for completed trips.")
+            pdf.add_metric("Average Revenue per Trip", avg_revenue_per_trip, "Mean revenue per trip.")
+            pdf.add_metric("Total Commission", total_commission, "Sum of commissions earned.")
 
-        pdf.add_section_title("Financial Performance")
-        total_revenue = f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else "N/A"
-        gross_profit = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
-        avg_commission_per_trip = f"{df['Company Commission Cleaned'].mean():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
-        avg_revenue_per_driver = f"{df.groupby('Driver')['Trip Pay Amount Cleaned'].sum().mean():,.0f} UGX" if 'Driver' in df.columns and 'Trip Pay Amount Cleaned' in df.columns else "N/A"
-        driver_earnings_per_trip = f"{(df['Trip Pay Amount Cleaned'] - df['Company Commission Cleaned']).mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns else "N/A"
-        fare_per_km = f"{(df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'] / df[df['Trip Status'] == 'Job Completed']['Distance'].replace(0, 1)).mean():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Distance' in df.columns and 'Trip Status' in df.columns else "N/A"
-        revenue_share = f"{(df['Company Commission Cleaned'].sum() / df['Trip Pay Amount Cleaned'].sum() * 100):.1f}%" if 'Trip Pay Amount Cleaned' in df.columns and 'Company Commission Cleaned' in df.columns and df['Trip Pay Amount Cleaned'].sum() > 0 else "N/A"
-
-        pdf.add_metric("Total Value of Rides", total_revenue, 
-                       "Total revenue from completed trips.")
-        pdf.add_metric("Total Commission", total_commission, 
-                       "Sum of commissions earned.")
-        pdf.add_metric("Gross Profit", gross_profit, 
-                       "Total commission earned.")
-        pdf.add_metric("Passenger Wallet Balance", f"{float(passenger_wallet_balance):,.0f} UGX", 
-                       "Total funds in passenger wallets.")
-        pdf.add_metric("Driver Wallet Balance", f"{float(driver_wallet_balance):,.0f} UGX", 
-                       "Total positive balances owed to drivers.")
-        pdf.add_metric("Commission Owed", f"{float(commission_owed):,.0f} UGX", 
-                       "Total negative driver balances.")
-        pdf.add_metric("Average Commission per Trip", avg_commission_per_trip, 
-                       "Mean commission per trip.")
-        pdf.add_metric("Average Revenue per Driver", avg_revenue_per_driver, 
-                       "Mean revenue per driver.")
-        pdf.add_metric("Average Driver Earnings per Trip", driver_earnings_per_trip, 
-                       "Mean driver earnings after commission.")
-        pdf.add_metric("Average Fare per KM", fare_per_km, 
-                       "Mean revenue per kilometer.")
-        pdf.add_metric("Revenue Share", revenue_share, 
-                       "Percentage of revenue retained as commission.")
-
-        pdf.add_section_title("User Performance")
-        unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
-        retention_rate_str = f"{float(retention_rate):.1f}%" if retention_rate is not None else "N/A"
-        passenger_ratio_str = f"{float(passenger_ratio):.1f}" if passenger_ratio is not None else "N/A"
-        total_union_staff = len(pd.read_excel(UNION_STAFF_FILE_PATH).iloc[:, 0].dropna()) if os.path.exists(UNION_STAFF_FILE_PATH) else 0
-
-        pdf.add_metric("Unique Drivers", unique_drivers, 
-                       "Number of distinct drivers completing trips.")
-        pdf.add_metric("Passenger App Downloads", int(app_downloads), 
-                       "Total app installations.")
-        pdf.add_metric("Riders Onboarded", int(riders_onboarded), 
-                       "Number of drivers registered.")
-        pdf.add_metric("Driver Retention Rate", retention_rate_str, 
-                       "Percentage of onboarded drivers who are active.")
-        pdf.add_metric("Passenger-to-Driver Ratio", passenger_ratio_str, 
-                       "Number of passengers per active driver.")
-        pdf.add_metric("Total Union Staff Members", total_union_staff, 
-                       "Number of staff listed.")
-
-        pdf.add_section_title("Geographic Analysis")
-        top_pickup_location = df['Pickup Location'].value_counts().index[0] if 'Pickup Location' in df.columns and not df['Pickup Location'].value_counts().empty else "N/A"
-        top_dropoff_location = df['Dropoff Location'].value_counts().index[0] if 'Dropoff Location' in df.columns and not df['Dropoff Location'].value_counts().empty else "N/A"
-        peak_hour = f"{df['Trip Hour'].value_counts().index[0]}:00" if 'Trip Hour' in df.columns and not df['Trip Hour'].value_counts().empty else "N/A"
-        primary_payment_method = df['Pay Mode'].value_counts().index[0] if 'Pay Mode' in df.columns and not df['Pay Mode'].value_counts().empty else "N/A"
-
-        pdf.add_metric("Top Pickup Location", top_pickup_location, 
-                       "Most frequent pickup location.")
-        pdf.add_metric("Top Dropoff Location", top_dropoff_location, 
-                       "Most frequent dropoff location.")
-        pdf.add_metric("Peak Hour", peak_hour, 
-                       "Hour with the most trips.")
-        pdf.add_metric("Primary Payment Method", primary_payment_method, 
-                       "Most common payment method.")
+            pdf.add_section_title("Financial Performance")
+            total_revenue = f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else "N/A"
+            gross_profit = f"{df['Company Commission Cleaned'].sum():,.0f} UGX" if 'Company Commission Cleaned' in df.columns else "N/A"
+            pdf.add_metric("Total Value of Rides", total_revenue, "Total revenue from completed trips.")
+            pdf.add_metric("Gross Profit", gross_profit, "Total commission earned.")
 
         return pdf
     except Exception as e:
         st.error(f"Error in create metrics pdf: {str(e)}")
-        return PDF()
+        return FPDF()
 
-def main():
-    st.image(r"./TUTU.png", width=80)
-    st.markdown("<h1>Union App Metrics Dashboard</h1>", unsafe_allow_html=True)
-    
-    # Theme switcher
-    theme = st.sidebar.radio("Theme", ["Light", "Dark"], index=0)
-    theme_css = """
-    <style>
-        .main { background-color: #f0f4f8; color: #333333; }
-        .stMetric { background: linear-gradient(135deg, #ffffff, #e6f0fa); border-radius: 6px; padding: 5px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); border-left: 2px solid #4a90e2; position: relative; padding-left: 20px; height: 45px; width: 100%; display: flex; align-items: center; }
-        .stMetric:before { content: url('path/to/icon.png'); position: absolute; left: 5px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; }
-        .stMetric label, .stMetric div { color: #333333 !important; font-size: 0.75em; margin: 0; }
-        .stMetric div { font-size: 1em; font-weight: 600; }
-        .stPlotlyChart, .stPydeckChart { background-color: #ffffff; border-radius: 6px; padding: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); border-left: 2px solid #50c878; }
-        .stTabs [data-baseweb="tab-list"] { background-color: #e6f0fa; border-radius: 4px; }
-        .stTabs [data-baseweb="tab"] { background-color: #e6f0fa; color: #333333; padding: 6px 12px; transition: all 0.3s; }
-        .stTabs [data-baseweb="tab"]:hover { background-color: #4a90e2; color: white; }
-        .stTabs [data-baseweb="tab--selected"] { background-color: #4a90e2; color: white; border-radius: 4px; }
-        body, .stApp { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        h1 { font-size: 1.8em; color: #4a90e2; font-weight: 600; text-align: center; }
-        h2 { font-size: 1.3em; color: #333333; font-weight: 500; margin-bottom: 6px; }
-        @media (max-width: 768px) { .stColumns > div { width: 100% !important; margin-bottom: 6px; } h1 { font-size: 1.5em; } h2 { font-size: 1.1em; } }
-    </style>
-    """
-    dark_theme_css = """
-    <style>
-        .main { background-color: #1a1a1a; color: #e0e0e0; }
-        .stMetric { background: linear-gradient(135deg, #2a2a2a, #404040); border-radius: 6px; padding: 5px; box-shadow: 0 1px 2px rgba(255, 255, 255, 0.1); border-left: 2px solid #1e90ff; position: relative; padding-left: 20px; height: 45px; width: 100%; display: flex; align-items: center; }
-        .stMetric:before { content: url('path/to/icon.png'); position: absolute; left: 5px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; filter: brightness(0) invert(1); }
-        .stMetric label, .stMetric div { color: #e0e0e0 !important; font-size: 0.75em; margin: 0; }
-        .stMetric div { font-size: 1em; font-weight: 600; }
-        .stPlotlyChart, .stPydeckChart { background-color: #2a2a2a; border-radius: 6px; padding: 8px; box-shadow: 0 1px 2px rgba(255, 255, 255, 0.1); border-left: 2px solid #50c878; }
-        .stTabs [data-baseweb="tab-list"] { background-color: #404040; border-radius: 4px; }
-        .stTabs [data-baseweb="tab"] { background-color: #404040; color: #e0e0e0; padding: 6px 12px; transition: all 0.3s; }
-        .stTabs [data-baseweb="tab"]:hover { background-color: #1e90ff; color: white; }
-        .stTabs [data-baseweb="tab--selected"] { background-color: #1e90ff; color: white; border-radius: 4px; }
-        body, .stApp { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        h1 { font-size: 1.8em; color: #1e90ff; font-weight: 600; text-align: center; }
-        h2 { font-size: 1.3em; color: #e0e0e0; font-weight: 500; margin-bottom: 6px; }
-        @media (max-width: 768px) { .stColumns > div { width: 100% !important; margin-bottom: 6px; } h1 { font-size: 1.5em; } h2 { font-size: 1.1em; } }
-    </style>
-    """
-    st.markdown(theme_css if theme == "Light" else dark_theme_css, unsafe_allow_html=True)
-
+def generate_html_report(grouped_metrics, date_range, df):
     try:
-        with st.spinner("Loading data... 🎉"):
-            st.cache_data.clear()
+        html_content = """
+        <html>
+        <head>
+            <title>Ride-Hailing Metrics Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                h1 { text-align: center; }
+                h2 { color: #333; }
+                .metric { margin: 10px 0; }
+                .chart { margin: 20px 0; }
+                .section { margin-bottom: 30px; }
+                .filter-panel { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+                .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+                .modal-content { background: white; margin: 15% auto; padding: 20px; width: 70%; max-height: 80%; overflow-y: auto; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+            </style>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <script>
+                window.chartData = {};
+                window.rawData = {};
+                function filterData(metricId, filterType, filterValue) {
+                    let chartData = JSON.parse(JSON.stringify(window.chartData[metricId]));
+                    let filteredData = chartData.data;
+                    if (filterType === 'trip_status' && filterValue) {
+                        filteredData = filteredData.map(trace => {
+                            let indices = window.rawData[metricId].filter(row => row['Trip Status'] === filterValue).map((_, i) => i);
+                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
+                        });
+                    } else if (filterType === 'payment_method' && filterValue) {
+                        filteredData = filteredData.map(trace => {
+                            let indices = window.rawData[metricId].filter(row => row['Pay Mode'] === filterValue).map((_, i) => i);
+                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
+                        });
+                    } else if (filterType === 'date_range' && filterValue) {
+                        let [start, end] = filterValue.split(' to ');
+                        filteredData = filteredData.map(trace => {
+                            let indices = window.rawData[metricId].filter(row => {
+                                let date = new Date(row['Trip Date']);
+                                return date >= new Date(start) && date <= new Date(end);
+                            }).map((_, i) => i);
+                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
+                        });
+                    }
+                    Plotly.newPlot(metricId, filteredData, chartData.layout);
+                }
 
-            min_date = datetime(2023, 1, 1).date()
-            max_date = datetime.now().date()
+                function showDrillDown(metricId, dataPoint) {
+                    let modal = document.getElementById('drillDownModal');
+                    let modalContent = document.getElementById('modalContent');
+                    let driver = dataPoint.label || dataPoint.points[0].label;
+                    let data = window.rawData[metricId].filter(row => row['Driver'] === driver);
+                    let table = '<table><tr><th>Trip Date</th><th>Revenue (UGX)</th><th>Distance (km)</th></tr>';
+                    data.forEach(row => {
+                        table += `<tr><td>${row['Trip Date']}</td><td>${row['Trip Pay Amount Cleaned']}</td><td>${row['Distance']}</td></tr>`;
+                    });
+                    table += '</table>';
+                    modalContent.innerHTML = `<h3>Trip Details for ${driver}</h3>${table}`;
+                    modal.style.display = 'block';
+                }
 
-            try:
-                df = load_data()
-                if not df.empty and 'Trip Date' in df.columns:
-                    min_date = df['Trip Date'].min().date()
-                    max_date = df['Trip Date'].max().date()
-            except:
-                pass
+                function closeModal() {
+                    document.getElementById('drillDownModal').style.display = 'none';
+                }
+            </script>
+        </head>
+        <body>
+            <h1>Ride-Hailing Metrics Report</h1>
+            <p style="text-align: center;">Date Range: {start_date} to {end_date}</p>
+            <div class="filter-panel">
+                <label>Filter by Trip Status: </label>
+                <select id="tripStatusFilter" onchange="filterData('chart_dynamic', 'trip_status', this.value)">
+                    <option value="">All</option>
+                    <option value="Job Completed">Completed</option>
+                    <option value="Cancelled">Cancelled</option>
+                    <option value="Expired">Expired</option>
+                </select>
+                <label>Filter by Payment Method: </label>
+                <select id="paymentMethodFilter" onchange="filterData('chart_dynamic', 'payment_method', this.value)">
+                    <option value="">All</option>
+                    {payment_options}
+                </select>
+                <label>Date Range: </label>
+                <input type="text" id="dateRangeFilter" placeholder="YYYY-MM-DD to YYYY-MM-DD" onchange="filterData('chart_dynamic', 'date_range', this.value)">
+            </div>
+            <div id="drillDownModal" class="modal">
+                <div class="modal-content">
+                    <span onclick="closeModal()" style="float:right;cursor:pointer;">&times;</span>
+                    <div id="modalContent"></div>
+                </div>
+            </div>
+        """
 
-            date_range = st.sidebar.date_input(
-                "Date Range",
-                value=[min_date, max_date],
-                min_value=min_date,
-                max_value=max_date
-            )
-            trip_status_filter = st.sidebar.multiselect(
-                "Filter by Trip Status",
-                options=df['Trip Status'].dropna().unique().tolist() if 'Trip Status' in df.columns else [],
-                default=df['Trip Status'].dropna().unique().tolist() if 'Trip Status' in df.columns else []
-            )
+        start_date = date_range[0].strftime('%Y-%m-%d') if date_range else "N/A"
+        end_date = date_range[1].strftime('%Y-%m-%d') if date_range else "N/A"
+        payment_options = ""
+        if 'Pay Mode' in df.columns:
+            for mode in df['Pay Mode'].unique():
+                payment_options += f'<option value="{mode}">{mode}</option>'
+        html_content = html_content.format(start_date=start_date, end_date=end_date, payment_options=payment_options)
 
-            df = load_data()
-            if len(date_range) == 2:
-                df = df[(df['Trip Date'].dt.date >= date_range[0]) &
-                        (df['Trip Date'].dt.date <= date_range[1])]
-            if trip_status_filter:
-                df = df[df['Trip Status'].isin(trip_status_filter)]
-
-            df_passengers = load_passengers_data(date_range)
-            df_drivers = load_drivers_data(date_range)
-
-        if df.empty:
-            st.error("No data loaded - please check the backend data file")
-            return
-
-        if 'Trip Date' not in df.columns:
-            st.error("No 'Trip Date' column found in the data")
-            return
-
-        app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
-        riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
-
-        unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
-        retention_rate, passenger_ratio = calculate_driver_retention_rate(
-            riders_onboarded, app_downloads, unique_drivers
-        )
-
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Export Data")
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            get_download_data(df, date_range).to_excel(writer, sheet_name='Daily Metrics', index=True)
-        excel_data = output.getvalue()
-        st.sidebar.download_button(
-            label="📊 Download Full Data (Excel)",
-            data=excel_data,
-            file_name=f"union_app_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio,
-                                 app_downloads, riders_onboarded, passenger_wallet_balance,
-                                 driver_wallet_balance, commission_owed)
-        pdf_output = pdf.output(dest='S').encode('latin1')
-        st.sidebar.download_button(
-            label="📄 Download Metrics Report (PDF)",
-            data=pdf_output,
-            file_name=f"union_app_metrics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-            mime="application/pdf"
-        )
-
-        # KPI Summary
-        st.markdown("<h2 style='text-align: center; color: #4a90e2;'>Key Performance Indicators</h2>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Revenue", f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX",
-                      help="Total revenue from completed trips.")
-        with col2:
-            st.metric("Total Drivers", unique_drivers,
-                      help="Number of unique active drivers.")
-        with col3:
-            st.metric("Completion Rate", f"{100 - calculate_cancellation_rate(df):.1f}%" if calculate_cancellation_rate(df) is not None else "N/A",
-                      help="Percentage of trips successfully completed.")
-
-        st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True)
-
-        tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Financial", "User Analysis", "Geographic"])
-
-        with tab1:
-            st.header("Trips Overview")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                st.metric("Total Requests", len(df),
-                          help="Total number of trip requests, including completed, cancelled, and expired trips.")
-            with col2:
-                completed_trips = len(df[df['Trip Status'] == 'Job Completed'])
-                st.metric("Completed Trips", completed_trips,
-                          help="Number of trips successfully completed from pickup to dropoff.")
-            with col3:
-                st.metric("Avg. Distance", f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A",
-                          help="Average distance per trip in kilometers, based on completed trips.")
-            with col4:
-                cancellation_rate = calculate_cancellation_rate(df)
-                if cancellation_rate is not None:
-                    st.metric("Driver Cancellation Rate", f"{cancellation_rate:.1f}%",
-                              help="Percentage of trips cancelled by drivers, indicating driver reliability.")
+        for group_name, metrics in grouped_metrics.items():
+            html_content += f'<div class="section"><h2>{group_name}</h2><div class="grid">'
+            for metric, viz in metrics:
+                html_content += '<div class="metric">'
+                if viz == "Text":
+                    value = metric_functions[metric](df, df_passengers, df_drivers)
+                    html_content += f'<h3>{metric}</h3><p>{value}</p>'
                 else:
-                    st.metric("Driver Cancellation Rate", "N/A",
-                              help="Percentage of trips cancelled by drivers (data unavailable).")
-            with col5:
-                timeout_rate = calculate_passenger_search_timeout(df)
-                if timeout_rate is not None:
-                    st.metric("Passenger Search Timeout", f"{timeout_rate:.1f}%",
-                              help="Percentage of trips that expired due to no driver acceptance.")
-                else:
-                    st.metric("Passenger Search Timeout", "N/A",
-                              help="Percentage of trips that expired due to no driver acceptance (data unavailable).")
+                    fig = metric_functions[metric](df, df_passengers, df_drivers)
+                    if fig:
+                        chart_id = f"chart_{metric.replace(' ', '_')}"
+                        chart_div = f'<div id="{chart_id}" class="chart"></div>'
+                        chart_script = f"""
+                        <script>
+                            window.chartData['{chart_id}'] = {fig.to_json()};
+                            window.rawData['{chart_id}'] = {df.to_json(orient='records')};
+                            Plotly.newPlot('{chart_id}', {fig.to_json()}, {{ responsive: true }}).then(function() {{
+                                document.getElementById('{chart_id}').on('plotly_click', function(data) {{
+                                    showDrillDown('{chart_id}', data);
+                                }});
+                            }});
+                        </script>
+                        """
+                        html_content += chart_div + chart_script
+                html_content += '</div>'
+            html_content += '</div></div>'
 
-            with st.expander("Detailed Trip Status Breakdown"):
-                status_breakdown_fig = completed_vs_cancelled_daily(df)
-                if status_breakdown_fig:
-                    st.plotly_chart(status_breakdown_fig, use_container_width=True)
-                else:
-                    st.warning("Could not generate trip status breakdown chart - missing required data")
-
-            col6, col7, col8 = st.columns(3)
-            with col6:
-                trips_per_driver(df)
-            with col7:
-                st.metric("Passenger App Downloads", app_downloads,
-                          help="Total number of passenger app installations.")
-            with col8:
-                st.metric("Riders Onboarded", riders_onboarded,
-                          help="Total number of drivers registered on the platform.")
-
-            total_trips_by_status(df)
-            total_distance_covered(df)
-            revenue_by_day(df)
-            avg_revenue_per_trip(df)
-            total_commission(df)
-
-        with tab2:
-            st.header("Financial Performance")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                total_revenue = df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum()
-                st.metric("Total Value Of Rides", f"{total_revenue:,.0f} UGX",
-                          help="Total revenue generated from completed trips.")
-            with col2:
-                total_commission(df)
-            with col3:
-                gross_profit(df)
-
-            col4, col5, col6 = st.columns(3)
-            with col4:
-                st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX",
-                          help="Total funds held in passenger wallet accounts.")
-            with col5:
-                st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX",
-                          help="Total positive balances owed to drivers.")
-            with col6:
-                st.metric("Commission Owed", f"{commission_owed:,.0f} UGX",
-                          help="Total negative balances, representing commissions owed by drivers.")
-
-            col7, col8, col9 = st.columns(3)
-            with col7:
-                avg_commission_per_trip(df)
-            with col8:
-                revenue_per_driver(df)
-            with col9:
-                driver_earnings_per_trip(df)
-
-            col10, col11 = st.columns(2)
-            with col10:
-                fare_per_km(df)
-            with col11:
-                revenue_share(df)
-
-            total_trips_by_type(df)
-            payment_method_revenue(df)
-            distance_vs_revenue_scatter(df)
-            weekday_vs_weekend_analysis(df)
-
-        with tab3:
-            st.header("User Performance")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                unique_driver_count(df)
-            with col2:
-                st.metric("Passenger App Downloads", app_downloads,
-                          help="Total number of passenger app installations.")
-            with col3:
-                st.metric("Riders Onboarded", riders_onboarded,
-                          help="Total number of drivers registered on the platform.")
-
-            col4, col5 = st.columns(2)
-            with col4:
-                st.metric("Driver Retention Rate", f"{retention_rate:.1f}%",
-                          help="Percentage of onboarded drivers who are active, indicating driver loyalty.")
-            with col5:
-                st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}",
-                          help="Number of passengers per active driver, showing supply-demand balance.")
-
-            top_drivers_by_revenue(df)
-            driver_performance_comparison(df)
-            passenger_insights(df)
-            top_10_drivers_by_earnings(df)
-
-            st.markdown("---")
-            st.subheader("Union Staff Trip Completion")
-            st.markdown("<div style='padding: 3px;'></div>", unsafe_allow_html=True)
-
-            try:
-                if os.path.exists(UNION_STAFF_FILE_PATH):
-                    union_staff_df = pd.read_excel(UNION_STAFF_FILE_PATH)
-                    if union_staff_df.empty or union_staff_df.shape[1] == 0:
-                        st.warning("Union Staff file is empty or does not contain columns.")
-                    else:
-                        union_staff_names = union_staff_df.iloc[:, 0].dropna().astype(str).tolist()
-                        st.metric("Total Union's Staff Members", len(union_staff_names),
-                                  help="Total number of Union staff members listed in the staff file.")
-                        staff_trips_df = get_completed_trips_by_union_passengers(df, union_staff_names)
-                        if not staff_trips_df.empty:
-                            st.dataframe(staff_trips_df)
-                        else:
-                            st.info("No matching completed trips found for Union Staff members.")
-                else:
-                    st.info(f"Union Staff file not found at: {UNION_STAFF_FILE_PATH}")
-            except Exception as e:
-                st.error(f"Error processing Union Staff file: {e}")
-
-        with tab4:
-            st.header("Geographic Analysis")
-            st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
-            most_frequent_locations(df)
-            peak_hours(df)
-            trip_status_trends(df)
-            customer_payment_methods(df)
-
-    except FileNotFoundError:
-        st.error("Data file not found. Please ensure the Excel file is placed in the data/ directory.")
+        html_content += '</body></html>'
+        return html_content
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error in generate html report: {str(e)}")
+        return "<html><body>Error generating report</body></html>"
 
-    # Feedback Section
-    st.markdown("---")
-    st.subheader("Provide Feedback")
-    st.write("Please provide your feedback below:")
+# Metric functions mapping
+metric_functions = {
+    "Passenger App Downloads": lambda df, df_p, df_d: f"{passenger_metrics(df_p)[0]:,}",
+    "Passenger Wallet Balance": lambda df, df_p, df_d: f"{passenger_metrics(df_p)[1]:,.0f} UGX",
+    "Riders Onboarded": lambda df, df_p, df_d: f"{driver_metrics(df_d)[0]:,}",
+    "Driver Wallet Balance": lambda df, df_p, df_d: f"{driver_metrics(df_d)[1]:,.0f} UGX",
+    "Commission Owed": lambda df, df_p, df_d: f"{driver_metrics(df_d)[2]:,.0f} UGX",
+    "Driver Retention Rate": lambda df, df_p, df_d: f"{calculate_driver_retention_rate(driver_metrics(df_d)[0], passenger_metrics(df_p)[0], df['Driver'].nunique() if 'Driver' in df.columns else 0)[0]:.1f}%",
+    "Passenger-to-Driver Ratio": lambda df, df_p, df_d: f"{calculate_driver_retention_rate(driver_metrics(df_d)[0], passenger_metrics(df_p)[0], df['Driver'].nunique() if 'Driver' in df.columns else 0)[1]:.1f}",
+    "Total Requests": lambda df, df_p, df_d: f"{len(df):,}",
+    "Completed Trips": lambda df, df_p, df_d: f"{len(df[df['Trip Status'] == 'Job Completed']) if 'Trip Status' in df.columns else 0:,}",
+    "Cancellation Rate": lambda df, df_p, df_d: f"{calculate_cancellation_rate(df):.1f}%" if calculate_cancellation_rate(df) is not None else "N/A",
+    "Search Timeout Rate": lambda df, df_p, df_d: f"{calculate_passenger_search_timeout(df):.1f}%" if calculate_passenger_search_timeout(df) is not None else "N/A",
+    "Average Distance": lambda df, df_p, df_d: f"{df['Distance'].mean():.1f} km" if 'Distance' in df.columns else "N/A",
+    "Total Distance Covered": total_distance_covered,
+    "Total Revenue": lambda df, df_p, df_d: f"{df[df['Trip Status'] == 'Job Completed']['Trip Pay Amount Cleaned'].sum():,.0f} UGX" if 'Trip Pay Amount Cleaned' in df.columns and 'Trip Status' in df.columns else "N/A",
+    "Total Commission": total_commission,
+    "Average Revenue per Trip": avg_revenue_per_trip,
+    "Average Commission per Trip": avg_commission_per_trip,
+    "Revenue Share": revenue_share,
+    "Average Revenue per Driver": revenue_per_driver,
+    "Average Driver Earnings per Trip": driver_earnings_per_trip,
+    "Average Fare per KM": fare_per_km,
+    "Trip Status Distribution": total_trips_by_status,
+    "Daily Trip Status Breakdown": completed_vs_cancelled_daily,
+    "Daily Revenue Trend": revenue_by_day,
+    "Revenue by Payment Method": payment_method_revenue,
+    "Distance vs Revenue": distance_vs_revenue_scatter,
+    "Weekday vs Weekend Revenue": weekday_vs_weekend_analysis,
+    "Top 5 Drivers by Revenue": top_drivers_by_revenue,
+    "Top 10 Drivers by Earnings": top_10_drivers_by_earnings,
+    "Driver Performance Comparison": driver_performance_comparison,
+    "Passenger Trip Frequency": passenger_insights,
+    "Top 5 Pickup Locations": most_frequent_locations,
+    "Trip Distribution by Hour": peak_hours,
+    "Customer Payment Methods": customer_payment_methods,
+    "Trip Status Trends": trip_status_trends
+}
 
-    # Embed the Google Form using the iframe code
-    form_iframe = """
-    <iframe src="https://docs.google.com/forms/d/e/1FAIpQLSeM3Y8mvr74nh-g-UkEN9jNmqz7IcdLoTI2yG1sT1tlS46hVQ/viewform?embedded=true" width="500" height="450" frameborder="0" marginheight="0" marginwidth="0">Loading…</iframe>
-    """
-    components.html(form_iframe, height=450)
+# Streamlit App
+st.set_page_config(page_title="Ride-Hailing Metrics Dashboard", layout="wide")
+st.title("Ride-Hailing Metrics Dashboard")
 
-if __name__ == "__main__":
-    if not os.path.exists("data"):
-        os.makedirs("data")
-    main()
+# Sidebar for date range and file uploads
+st.sidebar.header("Data Uploads")
+uploaded_passengers = st.sidebar.file_uploader("Upload PASSENGERS.xlsx", type="xlsx")
+uploaded_drivers = st.sidebar.file_uploader("Upload DRIVERS.xlsx", type="xlsx")
+uploaded_data = st.sidebar.file_uploader("Upload BEER.xlsx", type="xlsx")
+uploaded_transactions = st.sidebar.file_uploader("Upload TRANSACTIONS.xlsx", type="xlsx")
+uploaded_union_staff = st.sidebar.file_uploader("Upload UNION STAFF.xlsx", type="xlsx")
+uploaded_logo = st.sidebar.file_uploader("Upload TUTU.png", type="png")
+
+# Save uploaded files
+if uploaded_passengers:
+    with open(PASSENGERS_FILE_PATH, "wb") as f:
+        f.write(uploaded_passengers.read())
+if uploaded_drivers:
+    with open(DRIVERS_FILE_PATH, "wb") as f:
+        f.write(uploaded_drivers.read())
+if uploaded_data:
+    with open(DATA_FILE_PATH, "wb") as f:
+        f.write(uploaded_data.read())
+if uploaded_transactions:
+    with open(TRANSACTIONS_FILE_PATH, "wb") as f:
+        f.write(uploaded_transactions.read())
+if uploaded_union_staff:
+    with open(UNION_STAFF_FILE_PATH, "wb") as f:
+        f.write(uploaded_union_staff.read())
+if uploaded_logo:
+    with open(LOGO_PATH, "wb") as f:
+        f.write(uploaded_logo.read())
+
+st.sidebar.header("Filters")
+default_end = datetime.today().date()
+default_start = default_end - timedelta(days=30)
+start_date = st.sidebar.date_input("Start Date", default_start)
+end_date = st.sidebar.date_input("End Date", default_end)
+date_range = [start_date, end_date] if start_date and end_date else None
+
+# Load data
+df = load_data()
+df_passengers = load_passengers_data(date_range)
+df_drivers = load_drivers_data(date_range)
+
+# Filter main dataframe by date range
+if date_range and not df.empty:
+    df = df[(df['Trip Date'].dt.date >= start_date) & (df['Trip Date'].dt.date <= end_date)]
+
+# Calculate metrics
+app_downloads, passenger_wallet_balance = passenger_metrics(df_passengers)
+riders_onboarded, driver_wallet_balance, commission_owed = driver_metrics(df_drivers)
+unique_drivers = df['Driver'].nunique() if 'Driver' in df.columns else 0
+retention_rate, passenger_ratio = calculate_driver_retention_rate(riders_onboarded, app_downloads, unique_drivers)
+
+# Print console summary
+print_console_summary(df, df_passengers, df_drivers, date_range, app_downloads, passenger_wallet_balance, riders_onboarded, driver_wallet_balance, commission_owed, retention_rate, passenger_ratio)
+
+# Tabs
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Overview", "Financial Metrics", "Driver Performance", "Passenger Insights", "Geographic Analysis", "Custom Report Builder"])
+
+with tab1:
+    st.header("Overview")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Passenger App Downloads", app_downloads)
+        st.metric("Riders Onboarded", riders_onboarded)
+    with col2:
+        st.metric("Unique Drivers", unique_drivers)
+        st.metric("Driver Retention Rate", f"{retention_rate:.1f}%")
+    with col3:
+        st.metric("Passenger-to-Driver Ratio", f"{passenger_ratio:.1f}")
+        trips_per_driver(df)
+    
+    st.subheader("Trip Status")
+    fig = total_trips_by_status(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    fig = completed_vs_cancelled_daily(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("Trip Trends")
+    fig = trip_status_trends(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab2:
+    st.header("Financial Metrics")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        total_commission(df)
+        gross_profit(df)
+        avg_commission_per_trip(df)
+    with col2:
+        avg_revenue_per_trip(df)
+        revenue_per_driver(df)
+        driver_earnings_per_trip(df)
+    with col3:
+        fare_per_km(df)
+        revenue_share(df)
+        st.metric("Passenger Wallet Balance", f"{passenger_wallet_balance:,.0f} UGX")
+        st.metric("Driver Wallet Balance", f"{driver_wallet_balance:,.0f} UGX")
+        st.metric("Commission Owed", f"{commission_owed:,.0f} UGX")
+    
+    st.subheader("Revenue Trends")
+    fig = revenue_by_day(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    fig = payment_method_revenue(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    fig = distance_vs_revenue_scatter(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    fig = weekday_vs_weekend_analysis(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab3:
+    st.header("Driver Performance")
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = top_drivers_by_revenue(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        fig = top_10_drivers_by_earnings(df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("Driver Performance Comparison")
+    fig = driver_performance_comparison(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab4:
+    st.header("Passenger Insights")
+    fig = passenger_insights(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("Union Staff Trips")
+    if os.path.exists(UNION_STAFF_FILE_PATH):
+        union_staff = pd.read_excel(UNION_STAFF_FILE_PATH).iloc[:, 0].dropna().tolist()
+        staff_trips = get_completed_trips_by_union_passengers(df, union_staff)
+        if not staff_trips.empty:
+            st.dataframe(staff_trips)
+        else:
+            st.info("No completed trips by union staff found.")
+    else:
+        st.warning("UNION STAFF.xlsx file not found.")
+
+with tab5:
+    st.header("Geographic Analysis")
+    fig = most_frequent_locations(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("Peak Hours")
+    fig = peak_hours(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("Payment Methods")
+    fig = customer_payment_methods(df)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab6:
+    st.header("Custom Report Builder")
+    st.write("Create a personalized report by grouping metrics, selecting visualizations, and arranging them dynamically.")
+
+    # Metric Grouping
+    st.subheader("Metric Grouping")
+    if 'metric_groups' not in st.session_state:
+        st.session_state.metric_groups = {
+            "Financial": [
+                ("Total Revenue", "Text"),
+                ("Total Commission", "Text"),
+                ("Revenue Share", "Text")
+            ],
+            "Operational": [
+                ("Total Requests", "Text"),
+                ("Completed Trips", "Text"),
+                ("Cancellation Rate", "Text")
+            ]
+        }
+
+    group_name = st.text_input("Add/Edit Group Name")
+    if st.button("Add Group"):
+        if group_name and group_name not in st.session_state.metric_groups:
+            st.session_state.metric_groups[group_name] = []
+            st.success(f"Group '{group_name}' added.")
+
+    selected_group = st.selectbox("Select Group to Edit", list(st.session_state.metric_groups.keys()))
+    available_metrics = list(metric_functions.keys())
+    selected_metrics = st.multiselect(f"Metrics for {selected_group}", available_metrics, key=f"metrics_{selected_group}")
+
+    visualization_options = ["Text", "Bar", "Pie", "Line", "Scatter"]
+    group_visualizations = []
+    for metric in selected_metrics:
+        default_viz = "Text" if metric in ["Passenger App Downloads", "Passenger Wallet Balance", "Riders Onboarded", "Driver Wallet Balance", "Commission Owed", "Driver Retention Rate", "Passenger-to-Driver Ratio", "Total Requests", "Completed Trips", "Cancellation Rate", "Search Timeout Rate", "Average Distance", "Total Revenue", "Average Revenue per Trip", "Average Commission per Trip", "Revenue Share", "Average Revenue per Driver", "Average Driver Earnings per Trip", "Average Fare per KM"] else "Pie"
+        viz = st.selectbox(f"Visualization for {metric} in {selected_group}", visualization_options, index=visualization_options.index(default_viz), key=f"viz_{metric}_{selected_group}")
+        group_visualizations.append(viz)
+
+    if st.button("Update Group"):
+        st.session_state.metric_groups[selected_group] = list(zip(selected_metrics, group_visualizations))
+        st.success(f"Group '{selected_group}' updated.")
+
+    if st.button("Delete Group"):
+        if selected_group in st.session_state.metric_groups:
+            del st.session_state.metric_groups[selected_group]
+            st.success(f"Group '{selected_group}' deleted.")
+
+    # Dynamic Layout
+    st.subheader("Dynamic Layout")
+    st.write("Drag and drop metrics to arrange the layout.")
+    sortable_items = []
+    for group_name, metrics in st.session_state.metric_groups.items():
+        for metric, viz in metrics:
+            sortable_items.append({
+                "id": f"{group_name}_{metric}",
+                "title": f"{group_name}: {metric} ({viz})"
+            })
+
+    sorted_items = sortables(sortable_items, key="report_layout")
+    layout_order = [item["id"] for item in sorted_items]
+
+    # Preview
+    if st.button("Preview Report"):
+        st.subheader("Report Preview")
+        for item_id in layout_order:
+            group_name, metric = item_id.split("_", 1)
+            viz = next(v for m, v in st.session_state.metric_groups[group_name] if m == metric)
+            st.write(f"**{group_name}: {metric}**")
+            if viz == "Text":
+                value = metric_functions[metric](df, df_passengers, df_drivers)
+                st.write(value)
+            else:
+                fig = metric_functions[metric](df, df_passengers, df_drivers)
+                if fig:
+                    if viz == "Bar" and fig.data[0].type != "bar":
+                        fig = px.bar(x=fig.data[0].x, y=fig.data[0].y, title=metric)
+                    elif viz == "Pie" and fig.data[0].type != "pie":
+                        fig = px.pie(names=fig.data[0].x, values=fig.data[0].y, title=metric)
+                    elif viz == "Line" and fig.data[0].type != "scatter":
+                        fig = px.line(x=fig.data[0].x, y=fig.data[0].y, title=metric)
+                    elif viz == "Scatter" and fig.data[0].type != "scatter":
+                        fig = px.scatter(x=fig.data[0].x, y=fig.data[0].y, title=metric)
+                    st.plotly_chart(fig, use_container_width=True)
+
+    # Export Options
+    st.subheader("Export Report")
+    export_format = st.radio("Export Format", ["PDF", "HTML"])
+
+    if st.button("Generate Report"):
+        grouped_metrics = st.session_state.metric_groups
+        if export_format == "PDF":
+            pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded, passenger_wallet_balance, driver_wallet_balance, commission_owed, grouped_metrics)
+            pdf_buffer = BytesIO()
+            pdf_output = pdf.output(dest='S').encode('latin1')
+            pdf_buffer.write(pdf_output)
+            pdf_buffer.seek(0)
+            st.download_button(
+                label="Download PDF Report",
+                data=pdf_buffer,
+                file_name="custom_metrics_report.pdf",
+                mime="application/pdf"
+            )
+        
+        elif export_format == "HTML":
+            html_content = generate_html_report(grouped_metrics, date_range, df)
+            html_buffer = BytesIO()
+            html_buffer.write(html_content.encode('utf-8'))
+            html_buffer.seek(0)
+            st.download_button(
+                label="Download HTML Report",
+                data=html_buffer,
+                file_name="custom_metrics_report.html",
+                mime="text/html"
+            )
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
+                tmp.write(html_content.encode('utf-8'))
+                tmp.flush()
+                pdf_buffer = BytesIO()
+                HTML(tmp.name).write_pdf(pdf_buffer)
+                pdf_buffer.seek(0)
+                st.download_button(
+                    label="Download HTML as PDF",
+                    data=pdf_buffer,
+                    file_name="custom_metrics_report_from_html.pdf",
+                    mime="application/pdf"
+                )
+                os.unlink(tmp.name)
+
+# Sidebar export
+st.sidebar.header("Export Data")
+if not df.empty:
+    daily_data = get_download_data(df, date_range)
+    if not daily_data.empty:
+        csv = daily_data.to_csv(index=False)
+        st.sidebar.download_button(
+            label="Download Daily Metrics (CSV)",
+            data=csv,
+            file_name="daily_metrics.csv",
+            mime="text/csv"
+        )
+
+    pdf = create_metrics_pdf(df, date_range, retention_rate, passenger_ratio, app_downloads, riders_onboarded, passenger_wallet_balance, driver_wallet_balance, commission_owed)
+    pdf_buffer = BytesIO()
+    pdf_output = pdf.output(dest='S').encode('latin1')
+    pdf_buffer.write(pdf_output)
+    pdf_buffer.seek(0)
+    st.sidebar.download_button(
+        label="Download Metrics Report (PDF)",
+        data=pdf_buffer,
+        file_name="metrics_report.pdf",
+        mime="application/pdf"
+    )
+else:
+    st.sidebar.warning("No data available to export.")
