@@ -11,7 +11,7 @@ import base64
 import tempfile
 import logging
 import json
-from streamlit_sortables import sortables
+import sortables
 
 # Try to import WeasyPrint, handle if it fails
 try:
