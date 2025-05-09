@@ -487,10 +487,10 @@ def main():
             trips_per_driver = df.groupby("Driver").size()
             fig = px.histogram(trips_per_driver, nbins=30, title="Trips per Driver Distribution")
             st.plotly_chart(fig, use_container_width=True)
-with tabs[3]:
-    st.header("Geographic Metrics")
-    geo = calculate_geographic_kpis(beer, start_date, end_date, selected_statuses)
-    col1, col2 = st.columns(2)
+    with tabs[3]:
+       st.header("Geographic Metrics")
+       geo = calculate_geographic_kpis(beer, start_date, end_date, selected_statuses)
+       col1, col2 = st.columns(2)
     with col1:
         st.subheader("Top 5 Pickup Locations")
         if geo.get("top_pickup") is not None:
