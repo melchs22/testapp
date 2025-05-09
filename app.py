@@ -15,31 +15,8 @@ import json
 # Set page config as the first Streamlit command
 st.set_page_config(page_title="Ride-Hailing Metrics Dashboard", layout="wide")
 
-# List to collect import warnings
-import_warnings = []
-
-# Try to import WeasyPrint, handle if it fails
-try:
-    from weasyprint import HTML
-    WEASYPRINT_AVAILABLE = True
-except Exception as e:
-    import_warnings.append(f"WeasyPrint import failed: {str(e)}. HTML-to-PDF export will be disabled.")
-    WEASYPRINT_AVAILABLE = False
-
-# Try to import streamlit_sortables, handle if it fails
-try:
-    from streamlit_sortables import sortables
-    SORTABLES_AVAILABLE = True
-except Exception as e:
-    import_warnings.append(f"streamlit_sortables import failed: {str(e)}. Drag-and-drop layout will be disabled.")
-    SORTABLES_AVAILABLE = False
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Display import warnings after set_page_config
-for warning in import_warnings:
-    st.warning(warning)
 
 # File paths (relative for Streamlit Cloud)
 PASSENGERS_FILE_PATH = "./PASSENGERS.xlsx"
@@ -779,124 +756,25 @@ def generate_html_report(grouped_metrics, date_range, df):
                 h1 { text-align: center; }
                 h2 { color: #333; }
                 .metric { margin: 10px 0; }
-                .chart { margin: 20px 0; }
                 .section { margin-bottom: 30px; }
-                .filter-panel { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
                 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-                .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
-                .modal-content { background: white; margin: 15% auto; padding: 20px; width: 70%; max-height: 80%; overflow-y: auto; }
-                table { width: 100%; border-collapse: collapse; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; }
             </style>
-            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-            <script>
-                window.chartData = {};
-                window.rawData = {};
-                function filterData(metricId, filterType, filterValue) {
-                    let chartData = JSON.parse(JSON.stringify(window.chartData[metricId]));
-                    let filteredData = chartData.data;
-                    if (filterType === 'trip_status' && filterValue) {
-                        filteredData = filteredData.map(trace => {
-                            let indices = window.rawData[metricId].filter(row => row['Trip Status'] === filterValue).map((_, i) => i);
-                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
-                        });
-                    } else if (filterType === 'payment_method' && filterValue) {
-                        filteredData = filteredData.map(trace => {
-                            let indices = window.rawData[metricId].filter(row => row['Pay Mode'] === filterValue).map((_, i) => i);
-                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
-                        });
-                    } else if (filterType === 'date_range' && filterValue) {
-                        let [start, end] = filterValue.split(' to ');
-                        filteredData = filteredData.map(trace => {
-                            let indices = window.rawData[metricId].filter(row => {
-                                let date = new Date(row['Trip Date']);
-                                return date >= new Date(start) && date <= new Date(end);
-                            }).map((_, i) => i);
-                            return { ...trace, x: indices.map(i => trace.x[i]), y: indices.map(i => trace.y[i]) };
-                        });
-                    }
-                    Plotly.newPlot(metricId, filteredData, chartData.layout);
-                }
-
-                function showDrillDown(metricId, dataPoint) {
-                    let modal = document.getElementById('drillDownModal');
-                    let modalContent = document.getElementById('modalContent');
-                    let driver = dataPoint.label || dataPoint.points[0].label;
-                    let data = window.rawData[metricId].filter(row => row['Driver'] === driver);
-                    let table = '<table><tr><th>Trip Date</th><th>Revenue (UGX)</th><th>Distance (km)</th></tr>';
-                    data.forEach(row => {
-                        table += `<tr><td>${row['Trip Date']}</td><td>${row['Trip Pay Amount Cleaned']}</td><td>${row['Distance']}</td></tr>`;
-                    });
-                    table += '</table>';
-                    modalContent.innerHTML = `<h3>Trip Details for ${driver}</h3>${table}`;
-                    modal.style.display = 'block';
-                }
-
-                function closeModal() {
-                    document.getElementById('drillDownModal').style.display = 'none';
-                }
-            </script>
         </head>
         <body>
             <h1>Ride-Hailing Metrics Report</h1>
             <p style="text-align: center;">Date Range: {start_date} to {end_date}</p>
-            <div class="filter-panel">
-                <label>Filter by Trip Status: </label>
-                <select id="tripStatusFilter" onchange="filterData('chart_dynamic', 'trip_status', this.value)">
-                    <option value="">All</option>
-                    <option value="Job Completed">Completed</option>
-                    <option value="Cancelled">Cancelled</option>
-                    <option value="Expired">Expired</option>
-                </select>
-                <label>Filter by Payment Method: </label>
-                <select id="paymentMethodFilter" onchange="filterData('chart_dynamic', 'payment_method', this.value)">
-                    <option value="">All</option>
-                    {payment_options}
-                </select>
-                <label>Date Range: </label>
-                <input type="text" id="dateRangeFilter" placeholder="YYYY-MM-DD to YYYY-MM-DD" onchange="filterData('chart_dynamic', 'date_range', this.value)">
-            </div>
-            <div id="drillDownModal" class="modal">
-                <div class="modal-content">
-                    <span onclick="closeModal()" style="float:right;cursor:pointer;">×</span>
-                    <div id="modalContent"></div>
-                </div>
-            </div>
         """
 
         start_date = date_range[0].strftime('%Y-%m-%d') if date_range else "N/A"
         end_date = date_range[1].strftime('%Y-%m-%d') if date_range else "N/A"
-        payment_options = ""
-        if 'Pay Mode' in df.columns:
-            for mode in df['Pay Mode'].unique():
-                payment_options += f'<option value="{mode}">{mode}</option>'
-        html_content = html_content.format(start_date=start_date, end_date=end_date, payment_options=payment_options)
+        html_content = html_content.format(start_date=start_date, end_date=end_date)
 
         for group_name, metrics in grouped_metrics.items():
             html_content += f'<div class="section"><h2>{group_name}</h2><div class="grid">'
             for metric, viz in metrics:
                 html_content += '<div class="metric">'
-                if viz == "Text":
-                    value = metric_functions[metric](df, df_passengers, df_drivers)
-                    html_content += f'<h3>{metric}</h3><p>{value}</p>'
-                else:
-                    fig = metric_functions[metric](df, df_passengers, df_drivers)
-                    if fig:
-                        chart_id = f"chart_{metric.replace(' ', '_')}"
-                        chart_div = f'<div id="{chart_id}" class="chart"></div>'
-                        chart_script = f"""
-                        <script>
-                            window.chartData['{chart_id}'] = {fig.to_json()};
-                            window.rawData['{chart_id}'] = {df.to_json(orient='records')};
-                            Plotly.newPlot('{chart_id}', {fig.to_json()}, {{ responsive: true }}).then(function() {{
-                                document.getElementById('{chart_id}').on('plotly_click', function(data) {{
-                                    showDrillDown('{chart_id}', data);
-                                }});
-                            }});
-                        </script>
-                        """
-                        html_content += chart_div + chart_script
+                value = metric_functions[metric](df, df_passengers, df_drivers)
+                html_content += f'<h3>{metric}</h3><p>{value}</p>'
                 html_content += '</div>'
             html_content += '</div></div>'
 
@@ -1116,7 +994,7 @@ with tab5:
 
 with tab6:
     st.header("Custom Report Builder")
-    st.write("Create a personalized report by grouping metrics, selecting visualizations, and arranging them dynamically.")
+    st.write("Create a personalized report by grouping metrics and selecting visualizations.")
 
     # Metric Grouping
     st.subheader("Metric Grouping")
@@ -1162,11 +1040,7 @@ with tab6:
 
     # Dynamic Layout
     st.subheader("Dynamic Layout")
-    if SORTABLES_AVAILABLE:
-        st.write("Drag and drop metrics to arrange the layout.")
-    else:
-        st.write("Select the order of metrics for the report layout (drag-and-drop disabled).")
-
+    st.write("Select the order of metrics for the report layout.")
     sortable_items = []
     for group_name, metrics in st.session_state.metric_groups.items():
         for metric, viz in metrics:
@@ -1175,17 +1049,12 @@ with tab6:
                 "title": f"{group_name}: {metric} ({viz})"
             })
 
-    if SORTABLES_AVAILABLE:
-        sorted_items = sortables(sortable_items, key="report_layout")
-        layout_order = [item["id"] for item in sorted_items]
-    else:
-        st.write("Select metrics in the desired order:")
-        layout_order = st.multiselect(
-            "Metric Order",
-            [item["id"] for item in sortable_items],
-            default=[item["id"] for item in sortable_items],
-            key="layout_order"
-        )
+    layout_order = st.multiselect(
+        "Metric Order",
+        [item["id"] for item in sortable_items],
+        default=[item["id"] for item in sortable_items],
+        key="layout_order"
+    )
 
     # Preview
     if st.button("Preview Report"):
@@ -1240,26 +1109,6 @@ with tab6:
                 file_name="custom_metrics_report.html",
                 mime="text/html"
             )
-            
-            if WEASYPRINT_AVAILABLE:
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
-                        tmp.write(html_content.encode('utf-8'))
-                        tmp.flush()
-                        pdf_buffer = BytesIO()
-                        HTML(tmp.name).write_pdf(pdf_buffer)
-                        pdf_buffer.seek(0)
-                        st.download_button(
-                            label="Download HTML as PDF",
-                            data=pdf_buffer,
-                            file_name="custom_metrics_report_from_html.pdf",
-                            mime="application/pdf"
-                        )
-                        os.unlink(tmp.name)
-                except Exception as e:
-                    st.error(f"Error generating HTML as PDF: {str(e)}")
-            else:
-                st.info("HTML-to-PDF conversion is disabled due to missing WeasyPrint dependencies.")
 
 # Sidebar export
 st.sidebar.header("Export Data")
