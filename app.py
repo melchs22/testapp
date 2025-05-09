@@ -11,18 +11,35 @@ import base64
 import tempfile
 import logging
 import json
-import sortables
+
+# Set page config as the first Streamlit command
+st.set_page_config(page_title="Ride-Hailing Metrics Dashboard", layout="wide")
+
+# List to collect import warnings
+import_warnings = []
 
 # Try to import WeasyPrint, handle if it fails
 try:
     from weasyprint import HTML
     WEASYPRINT_AVAILABLE = True
 except Exception as e:
-    st.warning(f"WeasyPrint import failed: {str(e)}. HTML-to-PDF export will be disabled.")
+    import_warnings.append(f"WeasyPrint import failed: {str(e)}. HTML-to-PDF export will be disabled.")
     WEASYPRINT_AVAILABLE = False
+
+# Try to import streamlit_sortables, handle if it fails
+try:
+    from streamlit_sortables import sortables
+    SORTABLES_AVAILABLE = True
+except Exception as e:
+    import_warnings.append(f"streamlit_sortables import failed: {str(e)}. Drag-and-drop layout will be disabled.")
+    SORTABLES_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Display import warnings after set_page_config
+for warning in import_warnings:
+    st.warning(warning)
 
 # File paths (relative for Streamlit Cloud)
 PASSENGERS_FILE_PATH = "./PASSENGERS.xlsx"
@@ -929,7 +946,6 @@ metric_functions = {
 }
 
 # Streamlit App
-st.set_page_config(page_title="Ride-Hailing Metrics Dashboard", layout="wide")
 st.title("Ride-Hailing Metrics Dashboard")
 
 # Sidebar for date range and file uploads
@@ -1146,7 +1162,11 @@ with tab6:
 
     # Dynamic Layout
     st.subheader("Dynamic Layout")
-    st.write("Drag and drop metrics to arrange the layout.")
+    if SORTABLES_AVAILABLE:
+        st.write("Drag and drop metrics to arrange the layout.")
+    else:
+        st.write("Select the order of metrics for the report layout (drag-and-drop disabled).")
+
     sortable_items = []
     for group_name, metrics in st.session_state.metric_groups.items():
         for metric, viz in metrics:
@@ -1155,8 +1175,17 @@ with tab6:
                 "title": f"{group_name}: {metric} ({viz})"
             })
 
-    sorted_items = sortables(sortable_items, key="report_layout")
-    layout_order = [item["id"] for item in sorted_items]
+    if SORTABLES_AVAILABLE:
+        sorted_items = sortables(sortable_items, key="report_layout")
+        layout_order = [item["id"] for item in sorted_items]
+    else:
+        st.write("Select metrics in the desired order:")
+        layout_order = st.multiselect(
+            "Metric Order",
+            [item["id"] for item in sortable_items],
+            default=[item["id"] for item in sortable_items],
+            key="layout_order"
+        )
 
     # Preview
     if st.button("Preview Report"):
