@@ -487,23 +487,22 @@ def main():
             trips_per_driver = df.groupby("Driver").size()
             fig = px.histogram(trips_per_driver, nbins=30, title="Trips per Driver Distribution")
             st.plotly_chart(fig, use_container_width=True)
-
-    with tabs[3]:
-        st.header("Geographic Metrics")
-       geo = calculate_geographic_kpis(beer, start_date, end_date, selected_statuses)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Top 5 Pickup Locations")
-            if geo.get("top_pickup") is not None:
-                st.bar_chart(geo["top_pickup"])
-            else:
-                st.info("No data available for pickup locations.")
-        with col2:
-            st.subheader("Top 5 Dropoff Locations")
-            if geo.get("top_dropoff") is not None:
-                st.bar_chart(geo["top_dropoff"])
-            else:
-                st.info("No data available for dropoff locations.")
+with tabs[3]:
+    st.header("Geographic Metrics")
+    geo = calculate_geographic_kpis(beer, start_date, end_date, selected_statuses)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Top 5 Pickup Locations")
+        if geo.get("top_pickup") is not None:
+            st.bar_chart(geo["top_pickup"])
+        else:
+            st.info("No data available for pickup locations.")
+    with col2:
+        st.subheader("Top 5 Dropoff Locations")
+        if geo.get("top_dropoff") is not None:
+            st.bar_chart(geo["top_dropoff"])
+        else:
+            st.info("No data available for dropoff locations.")
 
         st.subheader("Peak Trip Hours")
         if geo.get("peak_hours") is not None:
