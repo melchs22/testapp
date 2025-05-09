@@ -490,7 +490,7 @@ def main():
 
     with tabs[3]:
         st.header("Geographic Metrics")
-        geo = calculate_geographickpis(beer, start_date, end_date, selected_statuses)
+       geo = calculate_geographic_kpis(beer, start_date, end_date, selected_statuses)
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Top 5 Pickup Locations")
